@@ -12,7 +12,7 @@ from market_data.upstox_rest import UpstoxREST
 from market_data.instruments import InstrumentResolver
 from market_data.engine import SignalEngine
 from services.telegram_service import TelegramService
-settings=Settings.from_env();configure_logging(settings.log_level);log=logging.getLogger(__name__)
+settings=Settings.from_env();configure_logging(settings.log_level);logging.getLogger("httpx").setLevel(logging.WARNING);log=logging.getLogger(__name__)
 calendar=MarketCalendar();started_at=now_ist();rest=None;resolver=None;telegram=None;engine=None;tasks=[]
 async def command_handler(message):
     global engine,telegram
