@@ -68,6 +68,10 @@ class Settings:
         db_backend = os.getenv("DB_BACKEND", "memory").strip().lower()
         if db_backend not in {"memory", "sqlite", "postgres", "redis"}:
             raise ValueError("DB_BACKEND must be memory, sqlite, postgres, or redis")
+        # Accept the simple singular name as well as the multi-admin form.
+        admin_raw = os.getenv("TELEGRAM_ADMIN_IDS", "").strip()
+        if not admin_raw:
+            admin_raw = os.getenv("TELEGRAM_ADMIN_ID", "").strip()
         return cls(
             app_env=os.getenv("APP_ENV", "production"),
             tz=os.getenv("TZ", defaults.TZ),
@@ -79,7 +83,7 @@ class Settings:
             upstox_access_token=os.getenv("UPSTOX_ACCESS_TOKEN", ""),
             telegram_bot_token=os.getenv("TELEGRAM_BOT_TOKEN", ""),
             telegram_chat_id=os.getenv("TELEGRAM_CHAT_ID", ""),
-            telegram_admin_ids=_csv_ints(os.getenv("TELEGRAM_ADMIN_IDS", "")),
+            telegram_admin_ids=_csv_ints(admin_raw),
             min_score=min_score, filter_profile=profile, explosion_min_score=explosion_score,
             entry_mode=entry_mode, db_backend=db_backend,
             database_url=os.getenv("DATABASE_URL", ""), redis_url=os.getenv("REDIS_URL", ""),
@@ -95,6 +99,8 @@ class Settings:
             warnings.append("UPSTOX_ACCESS_TOKEN is not configured; live market data will remain disabled")
         if not self.telegram_bot_token or not self.telegram_chat_id:
             warnings.append("Telegram credentials are incomplete; outbound alerts are disabled")
+        if self.telegram_bot_token and not self.telegram_admin_ids:
+            warnings.append("TELEGRAM_ADMIN_ID(S) is not configured; admin-only Telegram commands will be unavailable")
         if self.db_backend == "postgres" and not self.database_url:
             warnings.append("DB_BACKEND=postgres but DATABASE_URL is empty")
         if self.db_backend == "redis" and not self.redis_url:
