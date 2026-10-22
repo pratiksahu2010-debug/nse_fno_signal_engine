@@ -73,7 +73,7 @@ async def lifespan(app:FastAPI):
     if rest:await rest.close()
 
 app=FastAPI(title="NSE F&O Signal Engine",version="1.0.0",lifespan=lifespan)
-@app.get("/")
+@app.api_route("/", methods=["GET", "HEAD"])
 async def root():return {"service":"nse-fno-signal-engine","status":"ok","signal_only":True,"engine_version":"1.0.0"}
 @app.get("/ping")
 async def ping():return {"status":"ok","time_ist":now_ist().isoformat(),"market_open":calendar.is_market_open(),"ws_connected":False,"transport":"rest_closed_candle_polling","last_tick_age_sec":None}
