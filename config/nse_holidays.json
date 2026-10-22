@@ -1,1 +1,23 @@
-{"holidays": [], "note": "Populate with official NSE trading holidays and special sessions for each calendar year before live use."}
+{
+  "year": 2026,
+  "holidays": [
+    "2026-01-26",
+    "2026-03-03",
+    "2026-03-26",
+    "2026-03-31",
+    "2026-04-03",
+    "2026-04-14",
+    "2026-05-01",
+    "2026-05-28",
+    "2026-06-26",
+    "2026-09-14",
+    "2026-10-02",
+    "2026-10-20",
+    "2026-11-10",
+    "2026-11-24",
+    "2026-12-25",
+    "2026-11-08"
+  ],
+  "special_sessions": [],
+  "note": "NSE 2026 equity derivatives trading holidays based on official NSE circular NSE/FAOP/71777 dated 2025-12-12 and NSE holiday page. Muhurat trading on 2026-11-08 is deliberately not enabled as a bot trading session until the strategy is explicitly validated for special-session hours."
+}
