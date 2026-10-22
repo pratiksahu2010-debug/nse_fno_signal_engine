@@ -13,3 +13,9 @@ def test_market_open_bounds(tmp_path):
     cal = MarketCalendar(holiday_file)
     assert cal.is_market_open(datetime(2026, 10, 22, 9, 15, tzinfo=IST))
     assert not cal.is_market_open(datetime(2026, 10, 22, 15, 30, tzinfo=IST))
+
+
+def test_configured_2026_holidays():
+    cal = MarketCalendar(Path('config/nse_holidays.json'))
+    assert not cal.is_trading_day(date(2026, 10, 20))
+    assert not cal.is_trading_day(date(2026, 11, 10))
