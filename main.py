@@ -80,7 +80,7 @@ async def ping():return {"status":"ok","time_ist":now_ist().isoformat(),"market_
 @app.get("/health")
 async def health():
     warnings=list(settings.validate_deployment()); st=engine.status() if engine else {}
-    return JSONResponse({"status":"ok" if settings.upstox_access_token and settings.telegram_bot_token else "degraded","started_at_ist":started_at.isoformat(),"warnings":warnings,"engine":st,"components":{"upstox_rest":"configured" if settings.upstox_access_token else "missing_token","upstox_websocket":"not_enabled_protobuf_decoder_required","telegram":"configured" if settings.telegram_bot_token else "disabled"}})
+    return JSONResponse({"status":"ok" if settings.upstox_access_token and settings.telegram_bot_token and settings.telegram_chat_id else "degraded","started_at_ist":started_at.isoformat(),"warnings":warnings,"engine":st,"components":{"upstox_rest":"configured" if settings.upstox_access_token else "missing_token","upstox_websocket":"not_enabled_protobuf_decoder_required","telegram":"configured" if settings.telegram_bot_token else "disabled"}})
 @app.get("/status")
 async def status():return engine.status() if engine else {"status":"starting"}
 if __name__=="__main__":
