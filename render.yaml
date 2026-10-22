@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: nse-fno-signal-engine
+    runtime: python
+    plan: free
+    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /ping
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.11
+      - key: TZ
+        value: Asia/Kolkata
+      - key: SIGNAL_ONLY
+        value: "true"
+      - key: MIN_SCORE
+        value: "70"
+      - key: EXPLOSION_MIN_SCORE
+        value: "75"
