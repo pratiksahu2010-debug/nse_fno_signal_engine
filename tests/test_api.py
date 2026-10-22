@@ -8,3 +8,9 @@ def test_ping_endpoint():
 def test_health_endpoint():
     with TestClient(main.app) as c:
         r=c.get('/health');assert r.status_code==200 and 'components' in r.json()
+
+
+def test_root_supports_head():
+    with TestClient(main.app) as c:
+        r = c.head('/')
+        assert r.status_code == 200
