@@ -50,6 +50,8 @@ class Settings:
     capital: float = defaults.CAPITAL
     risk_pct: float = defaults.RISK_PCT
     signal_only: bool = True
+    scan_concurrency: int = 4
+    historical_cache_ttl_sec: int = 1800
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -63,6 +65,12 @@ class Settings:
         if not 0 <= explosion_score <= 100:
             raise ValueError("EXPLOSION_MIN_SCORE must be between 0 and 100")
         entry_mode = os.getenv("ENTRY_MODE", defaults.ENTRY_MODE).strip().lower()
+        scan_concurrency = int(os.getenv("SCAN_CONCURRENCY", "4"))
+        if not 1 <= scan_concurrency <= 8:
+            raise ValueError("SCAN_CONCURRENCY must be between 1 and 8")
+        historical_cache_ttl_sec = int(os.getenv("HISTORICAL_CACHE_TTL_SEC", "1800"))
+        if not 60 <= historical_cache_ttl_sec <= 7200:
+            raise ValueError("HISTORICAL_CACHE_TTL_SEC must be between 60 and 7200")
         if entry_mode not in {"close", "breakout"}:
             raise ValueError("ENTRY_MODE must be 'close' or 'breakout'")
         db_backend = os.getenv("DB_BACKEND", "memory").strip().lower()
@@ -86,6 +94,8 @@ class Settings:
             telegram_admin_ids=_csv_ints(admin_raw),
             min_score=min_score, filter_profile=profile, explosion_min_score=explosion_score,
             entry_mode=entry_mode, db_backend=db_backend,
+            scan_concurrency=scan_concurrency,
+            historical_cache_ttl_sec=historical_cache_ttl_sec,
             database_url=os.getenv("DATABASE_URL", ""), redis_url=os.getenv("REDIS_URL", ""),
             capital=float(os.getenv("CAPITAL", str(defaults.CAPITAL))),
             risk_pct=float(os.getenv("RISK_PCT", str(defaults.RISK_PCT))),
