@@ -149,8 +149,16 @@ class SignalEngine:
         else:
             result=score_explosion(d,self.settings.explosion_min_score,profile=getattr(self.settings, "filter_profile", "strict"))
             self.stage_counts["explosion_scoring_reached"]=self.stage_counts.get("explosion_scoring_reached",0)+1
-        diag["score"]=result.score
-        diag["score_rejects"]=list(result.rejects)
+        diag["score"] = result.score
+        diag["score_reasons"] = list(result.reasons)
+        diag["score_metrics"] = result.metrics
+        diag["score_rejects"] = list(result.rejects)
+        log.info(
+            "score_decision engine=%s symbol=%s candle=%s score=%s direction=%s setup=%s components=%s hard_gates=%s rejects=%s",
+            engine, symbol, bar, result.score, result.direction, result.setup,
+            result.metrics.get("score_components", {}),
+            result.metrics.get("hard_gates", {}), result.rejects,
+        )
         for reject in result.rejects:self.rejections[reject]=self.rejections.get(reject,0)+1
         if not result.direction:
             diag["stage"]="score_rejected";diag["reason"]=",".join(result.rejects) or "no_direction"
@@ -180,7 +188,7 @@ class SignalEngine:
         diag["stage"]="signal_created";diag["reason"]=None
         self.stage_counts["signal_created"]=self.stage_counts.get("signal_created",0)+1
         self.last_signal_time[(symbol, engine)] = bar
-        self.last_signal_bar[k]=str(bar);self.signals.append({"symbol":symbol,"engine":engine,"score":result.score,"direction":result.direction,"setup":result.setup,"time":str(bar),"metrics":result.metrics,"rejects":result.rejects})
+        self.last_signal_bar[k]=str(bar);self.signals.append({"symbol":symbol,"engine":engine,"score":result.score,"direction":result.direction,"setup":result.setup,"time":str(bar),"metrics":result.metrics,"score_reasons":result.reasons,"score_components":result.metrics.get("score_components",{}),"hard_gates":result.metrics.get("hard_gates",{}),"rejects":result.rejects})
         await self.telegram.send(self.format_signal(candidate,result))
         return result
     @staticmethod
