@@ -164,6 +164,18 @@ class SignalEngine:
                 f"SL: {c.stop:.2f} | T1: {c.t1:.2f} | T2: {c.t2:.2f}\n"
                 f"Closed-candle signal; not an order. Confirm option liquidity/spread and position size before trading.\n"
                 f"Reasons: {', '.join(r.reasons) or '—'}\nReject gates: {', '.join(r.rejects) or 'none'}")
+    async def _scan_one(self,symbol,key,engine):
+        """Isolate per-symbol failures so one malformed response cannot abort a full scan."""
+        try:
+            await self.scan_symbol(symbol,key,engine)
+        except Exception as exc:
+            diag_key=f"{symbol}:{engine}"
+            diag=self.last_symbol_diagnostics.setdefault(diag_key,{"symbol":symbol,"engine":engine})
+            diag["stage"]="processing_error";diag["reason"]=type(exc).__name__
+            self.stage_counts["processing_error"]=self.stage_counts.get("processing_error",0)+1
+            self.last_error=f"{symbol} ({engine}): {type(exc).__name__}: {exc}"
+            log.exception("symbol processing failed %s %s",engine,symbol)
+
     async def scan(self,limit=None):
         if self.paused or self.telegram.paused:return {"status":"paused","scanned":0,"signals":0}
         if not self.calendar.is_market_open():return {"status":"market_closed","scanned":0,"signals":0}
@@ -182,13 +194,13 @@ class SignalEngine:
         try:
             for sym, key in list(self.keys.items())[:limit]:
                 self.symbols_attempted += 1
-                await self.scan_symbol(sym, key, "CORE")
+                await self._scan_one(sym, key, "CORE")
                 scanned += 1
                 await asyncio.sleep(0.08)
             # EXPLOSION is independent and runs only for the configured curated universe.
             for sym, key in list(self.explosion_keys.items())[:limit]:
                 self.symbols_attempted += 1
-                await self.scan_symbol(sym, key, "EXPLOSION")
+                await self._scan_one(sym, key, "EXPLOSION")
                 scanned += 1
                 await asyncio.sleep(0.08)
         finally:
@@ -234,7 +246,8 @@ class SignalEngine:
             "last_data_fetch": self.last_data_fetch,
             "symbols_resolved": len(self.keys),
             "explosion_symbols_resolved": len(self.explosion_keys),
-            "signals_today": len(self.signals),
+            "signals_today": sum(1 for s in self.signals if str(s.get("time","")).startswith(now_ist().date().isoformat())),
+            "signals_in_process_memory": len(self.signals),
             "pending_candidates": sum(c.status == "PENDING" for c in self.candidates.values()),
             "active_candidates": sum(c.status == "ACTIVE" for c in self.candidates.values()),
             "scan_in_progress": self.scan_in_progress,
