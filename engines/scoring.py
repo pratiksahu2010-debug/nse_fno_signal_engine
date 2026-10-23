@@ -151,7 +151,7 @@ def score_core(
         score += 7; reasons.append("rvol_ok:+7")
     if direction and ((direction == "LONG" and rsi >= 52) or (direction == "SHORT" and rsi <= 48)):
         score += 8; reasons.append("rsi_momentum:+8")
-    if float(r.er10) >= 0.30:
+    if float(r.er10) >= defaults.ER_MIN:
         score += 5; reasons.append("efficiency:+5")
 
     # Options can adjust the score, but never override hard technical rejections.
@@ -165,7 +165,27 @@ def score_core(
         k: (float(r[k]) if _finite(r.get(k)) else None)
         for k in ("close", "atr14", "adx14", "plus_di", "minus_di", "rsi14", "rvol", "body_ratio", "clv", "ema9", "ema21", "vwap", "step_line", "er10")
     }
-    metrics.update({"ema9_extension_atr": round(ema9_extension, 3), "ema21_extension_atr": round(ema21_extension, 3), "profile": profile})
+    metrics.update({
+        "ema9_extension_atr": round(ema9_extension, 3),
+        "ema21_extension_atr": round(ema21_extension, 3),
+        "profile": profile,
+        "score_components": {
+            "ema_alignment": 20 if direction else 0,
+            "adx": 15 if adx >= 28 else 10 if adx >= adx_floor else 0,
+            "vwap_alignment": 12 if direction and ((direction == "LONG" and close > float(r.vwap)) or (direction == "SHORT" and close < float(r.vwap))) else 0,
+            "entry_setup": 18 if setup else 0,
+            "relative_volume": 12 if rvol >= 1.5 else 7 if rvol >= rvol_floor else 0,
+            "rsi_momentum": 8 if direction and ((direction == "LONG" and rsi >= 52) or (direction == "SHORT" and rsi <= 48)) else 0,
+            "er10": 5 if float(r.er10) >= defaults.ER_MIN else 0,
+            "option_adjustment": int(option_adjustment) if option_available else 0,
+        },
+        "hard_gates": {
+            "entry_setup": bool(setup),
+            "ema_alignment": direction is not None,
+            "adx_minimum": adx >= adx_floor,
+            "vwap_side": bool(direction and ((direction == "LONG" and close > float(r.vwap)) or (direction == "SHORT" and close < float(r.vwap)))),
+        },
+    })
     # Hard rejection gates are fail-closed and cannot be rescued by a high numeric score.
     return Score(score, direction if not rejects else None, setup, reasons, rejects, metrics)
 
