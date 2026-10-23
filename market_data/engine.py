@@ -12,7 +12,7 @@ log=logging.getLogger(__name__)
 class SignalEngine:
     def __init__(self,settings,rest,resolver,telegram,calendar):
         self.settings=settings;self.rest=rest;self.resolver=resolver;self.telegram=telegram;self.calendar=calendar
-        self.keys={};self.explosion_keys={};self.candles={};self.last_signal_bar={};self.last_signal_time={};self.candidates={};self.signals=[];self.last_scan=None;self.last_error=None;self.paused=False;self.ws_connected=False;self.last_tick=None;self.rejections={}
+        self.keys={};self.explosion_keys={};self.candles={};self.last_signal_bar={};self.last_signal_time={};self.candidates={};self.signals=[];self.last_scan=None;self.last_scan_started=None;self.last_scan_completed=None;self.scan_in_progress=False;self.symbols_attempted=0;self.symbols_failed=0;self.last_data_fetch=None;self.data_requests=0;self.data_request_failures=0;self.last_error=None;self.paused=False;self.ws_connected=False;self.last_tick=None;self.rejections={}
     async def initialize(self):
         self.keys=await self.resolver.resolve_many()
         try:
@@ -25,8 +25,16 @@ class SignalEngine:
         if not self.keys:log.warning("No symbols resolved; configure/verify instrument master")
         log.info("Resolved CORE=%d EXPLOSION=%d",len(self.keys),len(self.explosion_keys))
     async def scan_symbol(self,symbol,key,engine="CORE"):
-        try: candles=await self.rest.historical_candles(key,5,days=7)
-        except Exception as exc:self.last_error=str(exc);log.warning("history failed %s: %s",symbol,exc);return None
+        self.data_requests += 1
+        try:
+            candles = await self.rest.historical_candles(key, 5, days=7)
+            self.last_data_fetch = now_ist().isoformat()
+        except Exception as exc:
+            self.data_request_failures += 1
+            self.symbols_failed += 1
+            self.last_error = f"{symbol}: {type(exc).__name__}: {exc}"
+            log.warning("history failed %s: %s", symbol, exc)
+            return None
         # Ignore still-forming 5-minute candle; use the timestamp's start plus 5m and 2s grace.
         now=now_ist(); closed=[]
         for c in candles:
@@ -107,16 +115,38 @@ class SignalEngine:
         if self.paused or self.telegram.paused:return {"status":"paused","scanned":0,"signals":0}
         if not self.calendar.is_market_open():return {"status":"market_closed","scanned":0,"signals":0}
         if not self.keys:await self.initialize()
-        start=len(self.signals); scanned=0
-        for sym,key in list(self.keys.items())[:limit]:
-            await self.scan_symbol(sym,key,"CORE");scanned+=1
-            await asyncio.sleep(0.08)
-        # EXPLOSION is independent and runs only for a verified override universe.
-        for sym,key in list(self.explosion_keys.items())[:limit]:
-            await self.scan_symbol(sym,key,"EXPLOSION");scanned+=1
-            await asyncio.sleep(0.08)
-        self.last_scan=now_ist().isoformat()
-        return {"status":"ok","scanned":scanned,"signals":len(self.signals)-start,"last_scan":self.last_scan}
+        start = len(self.signals)
+        scanned = 0
+        self.last_scan_started = now_ist().isoformat()
+        self.scan_in_progress = True
+        self.symbols_attempted = 0
+        self.symbols_failed = 0
+        try:
+            for sym, key in list(self.keys.items())[:limit]:
+                self.symbols_attempted += 1
+                await self.scan_symbol(sym, key, "CORE")
+                scanned += 1
+                await asyncio.sleep(0.08)
+            # EXPLOSION is independent and runs only for the configured curated universe.
+            for sym, key in list(self.explosion_keys.items())[:limit]:
+                self.symbols_attempted += 1
+                await self.scan_symbol(sym, key, "EXPLOSION")
+                scanned += 1
+                await asyncio.sleep(0.08)
+        finally:
+            self.scan_in_progress = False
+            self.last_scan_completed = now_ist().isoformat()
+            self.last_scan = self.last_scan_completed
+        return {
+            "status": "ok",
+            "scanned": scanned,
+            "signals": len(self.signals) - start,
+            "last_scan_started": self.last_scan_started,
+            "last_scan_completed": self.last_scan_completed,
+            "data_requests": self.data_requests,
+            "data_request_failures": self.data_request_failures,
+            "symbols_failed": self.symbols_failed,
+        }
     async def run_loop(self):
         while True:
             try:
@@ -125,4 +155,33 @@ class SignalEngine:
                 await asyncio.sleep(max(5,300-(now.minute%5)*60-now.second))
             except asyncio.CancelledError:raise
             except Exception as exc:self.last_error=str(exc);log.exception("scan loop error");await asyncio.sleep(10)
-    def status(self):return {"service":"nse-fno-signal-engine","market_open":self.calendar.is_market_open(),"symbols_resolved":len(self.keys),"explosion_symbols_resolved":len(self.explosion_keys),"signals_today":len(self.signals),"pending_candidates":sum(c.status=="PENDING" for c in self.candidates.values()),"active_candidates":sum(c.status=="ACTIVE" for c in self.candidates.values()),"last_scan":self.last_scan,"last_error":self.last_error,"ws_connected":self.ws_connected,"last_tick":str(self.last_tick) if self.last_tick else None,"paused":self.paused or self.telegram.paused,"filter_profile":getattr(self.settings, "filter_profile", "strict"),"reject_reasons":self.rejections,"signal_only":True}
+    def status(self):
+        return {
+            "service": "nse-fno-signal-engine",
+            "market_open": self.calendar.is_market_open(),
+            "market_data_transport": "rest_closed_candle_polling",
+            "websocket_enabled": False,
+            "ws_connected": False,
+            "websocket_note": "WebSocket is not implemented/enabled; false is intentional.",
+            "rest_polling_configured": bool(getattr(self.rest, "token", "")),
+            "data_requests": self.data_requests,
+            "data_request_failures": self.data_request_failures,
+            "last_data_fetch": self.last_data_fetch,
+            "symbols_resolved": len(self.keys),
+            "explosion_symbols_resolved": len(self.explosion_keys),
+            "signals_today": len(self.signals),
+            "pending_candidates": sum(c.status == "PENDING" for c in self.candidates.values()),
+            "active_candidates": sum(c.status == "ACTIVE" for c in self.candidates.values()),
+            "scan_in_progress": self.scan_in_progress,
+            "last_scan_started": self.last_scan_started,
+            "last_scan_completed": self.last_scan_completed,
+            "last_scan": self.last_scan,
+            "symbols_attempted": self.symbols_attempted,
+            "symbols_failed": self.symbols_failed,
+            "last_error": self.last_error,
+            "last_tick": str(self.last_tick) if self.last_tick else None,
+            "paused": self.paused or self.telegram.paused,
+            "filter_profile": getattr(self.settings, "filter_profile", "strict"),
+            "reject_reasons": self.rejections,
+            "signal_only": True,
+        }
