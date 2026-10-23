@@ -2,15 +2,17 @@ from config.settings import Settings
 
 
 def test_defaults_are_signal_only(monkeypatch):
-    for key in ["MIN_SCORE", "EXPLOSION_MIN_SCORE", "ENTRY_MODE", "FILTER_PROFILE", "DB_BACKEND", "SIGNAL_ONLY", "TELEGRAM_ADMIN_ID", "TELEGRAM_ADMIN_IDS"]:
+    for key in ["MIN_SCORE", "EXPLOSION_MIN_SCORE", "ENTRY_MODE", "FILTER_PROFILE", "DB_BACKEND", "SIGNAL_ONLY", "TELEGRAM_ADMIN_ID", "TELEGRAM_ADMIN_IDS", "SCAN_CONCURRENCY", "HISTORICAL_CACHE_TTL_SEC"]:
         monkeypatch.delenv(key, raising=False)
     settings = Settings.from_env()
-    assert settings.min_score == 80
+    assert settings.min_score == 75
     assert settings.explosion_min_score == 80
     assert settings.entry_mode == "close"
     assert settings.filter_profile == "strict"
     assert settings.db_backend == "memory"
     assert settings.signal_only is True
+    assert settings.scan_concurrency == 4
+    assert settings.historical_cache_ttl_sec == 1800
     assert settings.telegram_admin_ids == ()
 
 
