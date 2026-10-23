@@ -330,29 +330,29 @@ class SignalEngine:
         for candidate in today_candidates:
             status_counts[candidate.status] = status_counts.get(candidate.status, 0) + 1
         top_rejections = sorted(self.rejections.items(), key=lambda item: item[1], reverse=True)[:5]
-        reject_lines = "\\n".join(f"• {name.replace('_', ' ')}: {count}" for name, count in top_rejections) or "• No rejection counts recorded"
-        signal_lines = "\\n".join(
+        reject_lines = "\n".join(f"• {name.replace('_', ' ')}: {count}" for name, count in top_rejections) or "• No rejection counts recorded"
+        signal_lines = "\n".join(
             f"• {s.get('time', '')[11:16]} IST | {s.get('symbol', '?')} | {s.get('direction', '?')} | {s.get('engine', '?')} | {s.get('score', 0)}/100"
             for s in daily_signals[-10:]
         ) or "• No qualified signals recorded today"
         status_line = " | ".join(f"{name}: {count}" for name, count in sorted(status_counts.items())) or "No candidates recorded"
         message = (
-            "📊 NSE F&O DAILY SUMMARY\\n"
-            f"📅 {now.strftime('%d %b %Y')} | Market close: {bounds[1].strftime('%H:%M IST')}\\n"
-            "\\n📈 SIGNAL STATISTICS\\n"
-            f"• Total confirmed signals: {len(daily_signals)}\\n"
-            f"• LONG: {long_count} | SHORT: {short_count}\\n"
-            f"• CORE: {core_count} | EXPLOSION: {explosion_count}\\n"
-            "\\n🎯 CANDIDATE STATUS (current in-memory records)\\n"
-            f"• {status_line}\\n"
-            "\\n🧾 TODAY'S SIGNALS\\n"
-            f"{signal_lines}\\n"
-            "\\n🔎 TOP REJECTION COUNTS\\n"
-            f"{reject_lines}\\n"
-            "\\n🛠 DATA / ENGINE\\n"
-            f"• Symbols attempted in last scan: {self.symbols_attempted}\\n"
-            f"• Data requests / failures: {self.data_requests} / {self.data_request_failures}\\n"
-            f"• Last scan: {self.last_scan_completed or 'N/A'}\\n\\n"
+            "📊 NSE F&O DAILY SUMMARY\n"
+            f"📅 {now.strftime('%d %b %Y')} | Market close: {bounds[1].strftime('%H:%M IST')}\n"
+            "\n📈 SIGNAL STATISTICS\n"
+            f"• Total confirmed signals: {len(daily_signals)}\n"
+            f"• LONG: {long_count} | SHORT: {short_count}\n"
+            f"• CORE: {core_count} | EXPLOSION: {explosion_count}\n"
+            "\n🎯 CANDIDATE STATUS (current in-memory records)\n"
+            f"• {status_line}\n"
+            "\n🧾 TODAY'S SIGNALS\n"
+            f"{signal_lines}\n"
+            "\n🔎 TOP REJECTION COUNTS\n"
+            f"{reject_lines}\n"
+            "\n🛠 DATA / ENGINE\n"
+            f"• Symbols attempted in last scan: {self.symbols_attempted}\n"
+            f"• Data requests / failures: {self.data_requests} / {self.data_request_failures}\n"
+            f"• Last scan: {self.last_scan_completed or 'N/A'}\n\n"
             "Note: signal and candidate history is held in process memory; a service restart can reset this report's counts. "
             "This is a signal-only report, not realized P&L."
         )
