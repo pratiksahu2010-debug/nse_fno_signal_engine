@@ -148,8 +148,8 @@ async def lifespan(app: FastAPI):
             await engine.initialize()
         except Exception:
             log.exception("Instrument initialization failed")
-    if settings.telegram_bot_token:
-        tasks.append(asyncio.create_task(telegram.poll(command_handler), name="telegram-poll"))
+    # Signal-delivery-only mode: do not poll Telegram getUpdates.
+    # Telegram remains enabled for outbound signal notifications via sendMessage.
     if settings.upstox_access_token:
         tasks.append(asyncio.create_task(engine.run_loop(), name="signal-loop"))
     yield
