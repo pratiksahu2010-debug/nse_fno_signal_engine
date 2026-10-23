@@ -195,7 +195,16 @@ async def ping():
 async def health():
     warnings = list(settings.validate_deployment())
     state = engine.status() if engine else {}
-    configured = bool(settings.upstox_access_token and settings.telegram_bot_token and settings.telegram_chat_id and settings.telegram_admin_ids)
+    telegram_state = telegram.status() if telegram else {}
+    if settings.telegram_bot_token and settings.telegram_chat_id and not telegram_state.get("last_success_at"):
+        warnings.append("Telegram delivery has not been verified successfully; inspect components.telegram_delivery.last_error")
+    # Admin ID is required only for privileged commands, not outbound signal alerts.
+    configured = bool(
+        settings.upstox_access_token
+        and settings.telegram_bot_token
+        and settings.telegram_chat_id
+        and telegram_state.get("last_success_at")
+    )
     return JSONResponse({
         "status": "ok" if configured else "degraded",
         "started_at_ist": started_at.isoformat(),
