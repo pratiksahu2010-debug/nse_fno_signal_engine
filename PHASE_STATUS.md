@@ -1,6 +1,6 @@
 # Integrated build status
 
-This is the consolidated project package. CORE strategy, explosion strategy logic, indicators, option-chain analytics, candidate lifecycle, Telegram commands, REST historical polling, API endpoints, replay harness, and tests are integrated.
+This is the consolidated project package. CORE strategy, explosion strategy logic, indicators, option-chain analytics, candidate lifecycle, outbound Telegram alerts, REST historical polling, API endpoints, replay harness, and tests are integrated. Inbound Telegram command polling is disabled in the current runtime.
 
 ## Explicit limitations before live deployment
 - Upstox REST API calls use documented V3 historical candle and V2 option-chain endpoints. Credentials, access-token validity, instrument-master schema and account entitlements must be tested with your own account.
