@@ -52,3 +52,20 @@ def test_telegram_missing_credentials_are_visible():
         finally:
             await service.close()
     asyncio.run(run())
+
+
+
+def test_telegram_bot_destination_error_is_actionable(monkeypatch):
+    async def run():
+        service = TelegramService("fake-token", "99999")
+        async def fake_call(method, payload=None):
+            raise RuntimeError("sendMessage: Forbidden: the bot can't send messages to the bot")
+        monkeypatch.setattr(service, "call", fake_call)
+        try:
+            assert await service.send("test") is False
+            error = service.status()["last_error"].lower()
+            assert "numeric telegram user id" in error
+            assert "group/channel" in error
+        finally:
+            await service.close()
+    asyncio.run(run())
