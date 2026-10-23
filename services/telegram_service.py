@@ -1,61 +1,124 @@
-"""Minimal asynchronous Telegram Bot API client and polling command router."""
+"""Minimal asynchronous Telegram Bot API client with outbound delivery diagnostics."""
 from __future__ import annotations
 
 import asyncio
 import logging
 
 import httpx
+from utils.time_utils import now_ist
 
 log = logging.getLogger(__name__)
 
 
 class TelegramService:
     def __init__(self, token: str, chat_id: str = "", admin_ids=()):
-        self.token = token
-        self.chat_id = str(chat_id)
+        self.token = token.strip()
+        self.chat_id = str(chat_id).strip()
         self.admin_ids = set(admin_ids)
         self.offset = 0
-        # Telegram long polling may wait for 20 seconds. The HTTP read timeout
-        # must be longer than that server-side wait, otherwise every idle poll
-        # can raise ReadTimeout even when Telegram is healthy.
         self.client = httpx.AsyncClient(
             timeout=httpx.Timeout(connect=10.0, read=40.0, write=15.0, pool=10.0)
         )
         self.paused = False
         self.commands = {}
+        self.messages_sent = 0
+        self.messages_failed = 0
+        self.last_attempt_at = None
+        self.last_success_at = None
+        self.last_error = None
+        self.last_method = None
+        self.bot_username = None
 
     async def close(self):
         await self.client.aclose()
 
     async def call(self, method, payload=None):
         if not self.token:
-            return None
+            raise RuntimeError("missing_bot_token")
         response = await self.client.post(
             f"https://api.telegram.org/bot{self.token}/{method}",
             json=payload or {},
         )
-        response.raise_for_status()
-        data = response.json()
-        if not data.get("ok"):
-            # Avoid logging the bot token, which is embedded in Telegram URLs.
-            raise RuntimeError(f"Telegram API call {method} failed")
+        try:
+            data = response.json()
+        except Exception:
+            response.raise_for_status()
+            raise RuntimeError(f"Telegram API {method} returned invalid JSON")
+        if not response.is_success or not isinstance(data, dict) or not data.get("ok"):
+            # Telegram's description is useful for diagnosis and does not contain
+            # the bot token. Never log response URLs, which contain the token.
+            description = data.get("description", "request rejected") if isinstance(data, dict) else "request rejected"
+            raise RuntimeError(f"{method}: {description}")
         return data.get("result")
 
     async def send(self, text, chat_id=None):
-        chat = str(chat_id or self.chat_id)
-        if not self.token or not chat:
+        chat = str(chat_id or self.chat_id).strip()
+        self.last_attempt_at = now_ist().isoformat()
+        self.last_method = "sendMessage"
+        if not self.token:
+            self.messages_failed += 1
+            self.last_error = "missing_bot_token"
+            log.error("Telegram send skipped: TELEGRAM_BOT_TOKEN is missing")
+            return False
+        if not chat:
+            self.messages_failed += 1
+            self.last_error = "missing_chat_id"
+            log.error("Telegram send skipped: TELEGRAM_CHAT_ID is missing")
             return False
         try:
             await self.call(
                 "sendMessage",
-                {"chat_id": chat, "text": text, "disable_web_page_preview": True},
+                {"chat_id": chat, "text": str(text), "disable_web_page_preview": True},
             )
+            self.messages_sent += 1
+            self.last_success_at = now_ist().isoformat()
+            self.last_error = None
+            log.info("Telegram message delivered successfully (total_sent=%d)", self.messages_sent)
             return True
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            log.warning("Telegram send failed (%s)", type(exc).__name__)
+            self.messages_failed += 1
+            self.last_error = str(exc)[:240] if isinstance(exc, RuntimeError) else type(exc).__name__
+            log.error("Telegram message delivery failed: %s", self.last_error)
             return False
+
+    async def startup_check(self):
+        """Verify token and target chat, then send one explicit delivery test."""
+        self.last_method = "getMe"
+        if not self.token:
+            self.last_error = "missing_bot_token"
+            log.error("Telegram startup check failed: TELEGRAM_BOT_TOKEN is missing")
+            return False
+        if not self.chat_id:
+            self.last_error = "missing_chat_id"
+            log.error("Telegram startup check failed: TELEGRAM_CHAT_ID is missing")
+            return False
+        try:
+            bot = await self.call("getMe")
+            self.bot_username = bot.get("username") if isinstance(bot, dict) else None
+            log.info("Telegram bot token verified; username=%s", self.bot_username or "unknown")
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            self.last_error = str(exc)[:240] if isinstance(exc, RuntimeError) else type(exc).__name__
+            log.error("Telegram startup verification failed: %s", self.last_error)
+            return False
+        return await self.send(
+            "NSE F&O Signal Engine online. Telegram delivery test passed; signal alerts are enabled."
+        )
+
+    def status(self):
+        return {
+            "configured": bool(self.token and self.chat_id),
+            "bot_username": self.bot_username,
+            "messages_sent": self.messages_sent,
+            "messages_failed": self.messages_failed,
+            "last_attempt_at": self.last_attempt_at,
+            "last_success_at": self.last_success_at,
+            "last_error": self.last_error,
+            "last_method": self.last_method,
+        }
 
     async def poll(self, handler):
         while True:
@@ -80,13 +143,11 @@ class TelegramService:
             except asyncio.CancelledError:
                 raise
             except httpx.ReadTimeout:
-                # A timeout is recoverable; keep the polling task alive without
-                # emitting a full traceback for a routine long-poll delay.
                 log.warning("Telegram long poll timed out; retrying")
                 await asyncio.sleep(1)
             except (httpx.TimeoutException, httpx.TransportError) as exc:
                 log.warning("Telegram transport error (%s); retrying", type(exc).__name__)
                 await asyncio.sleep(3)
-            except Exception:
-                log.exception("Telegram polling error")
+            except Exception as exc:
+                log.warning("Telegram polling error (%s); retrying", type(exc).__name__)
                 await asyncio.sleep(3)
