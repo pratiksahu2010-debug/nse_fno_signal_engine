@@ -1,6 +1,6 @@
 """Closed-candle scan coordinator. REST historical polling is the safe fallback transport."""
 from __future__ import annotations
-import asyncio, logging
+import asyncio, logging, time as monotonic_time
 import pandas as pd
 from datetime import datetime, timezone, time
 from engines.indicators import add_indicators
@@ -12,6 +12,9 @@ log=logging.getLogger(__name__)
 class SignalEngine:
     def __init__(self,settings,rest,resolver,telegram,calendar):
         self.settings=settings;self.rest=rest;self.resolver=resolver;self.telegram=telegram;self.calendar=calendar
+        self.scan_concurrency=max(1,min(8,int(getattr(settings,"scan_concurrency",4))))
+        self.historical_cache_ttl_sec=max(60,int(getattr(settings,"historical_cache_ttl_sec",1800)))
+        self.historical_cache={};self.last_scan_duration_seconds=None
         self.keys={};self.explosion_keys={};self.candles={};self.last_signal_bar={};self.last_signal_time={};self.candidates={};self.signals=[];self.last_scan=None;self.last_scan_started=None;self.last_scan_completed=None;self.scan_in_progress=False;self.symbols_attempted=0;self.symbols_failed=0;self.last_data_fetch=None;self.data_requests=0;self.data_request_failures=0;self.last_error=None;self.paused=False;self.ws_connected=False;self.last_tick=None;self.rejections={};self.stage_counts={};self.last_symbol_diagnostics={};self.scan_lock=asyncio.Lock()
     async def initialize(self):
         self.keys=await self.resolver.resolve_many()
@@ -28,13 +31,20 @@ class SignalEngine:
         diag_key=f"{symbol}:{engine}"
         diag={"symbol":symbol,"engine":engine,"stage":"fetching","candles_returned":0,"closed_candles":0,"latest_closed_candle":None,"latest_candle_age_seconds":None,"reason":None}
         self.last_symbol_diagnostics[diag_key]=diag
-        # One historical plus one intraday REST request are attempted per symbol.
-        self.data_requests += 2
         try:
-            # Historical candles provide indicator warm-up; Upstox's separate intraday
-            # endpoint supplies the current session. Historical-only responses can end
-            # on the previous trading day even when the request succeeds.
-            historical = await self.rest.historical_candles(key, 5, days=7)
+            # Historical warm-up data changes slowly; cache it between scans to reduce
+            # REST traffic. Intraday data is always fetched fresh and takes precedence
+            # for duplicate candle timestamps. A short TTL also bounds stale history.
+            cached = self.historical_cache.get(key)
+            if cached and monotonic_time.monotonic() - cached[0] < self.historical_cache_ttl_sec:
+                historical = cached[1]
+                diag["historical_cache_hit"] = True
+            else:
+                self.data_requests += 1
+                historical = await self.rest.historical_candles(key, 5, days=7)
+                self.historical_cache[key] = (monotonic_time.monotonic(), historical)
+                diag["historical_cache_hit"] = False
+            self.data_requests += 1
             intraday = await self.rest.intraday_candles(key, 5)
             self.last_data_fetch = now_ist().isoformat()
             now = now_ist()
@@ -142,6 +152,7 @@ class SignalEngine:
             if prelim.score>=60 and prelim.direction:
                 underlying=key
                 try:
+                    self.data_requests += 1
                     chain=await self.rest.option_chain(underlying,"current_week"); oc=assess_chain(chain,prelim.direction);oc_adj=oc.adjustment;oc_avail=oc.available
                 except Exception as exc:log.info("option chain unavailable %s: %s",symbol,exc)
             result=score_core(d,self.settings.min_score,oc_adj,oc_avail,profile=getattr(self.settings, "filter_profile", "strict"))
@@ -223,22 +234,24 @@ class SignalEngine:
         self.last_symbol_diagnostics={}
         self.last_error=None
         self.last_scan_started = now_ist().isoformat()
+        scan_started_monotonic = monotonic_time.monotonic()
         self.scan_in_progress = True
         self.symbols_attempted = 0
         self.symbols_failed = 0
         try:
-            for sym, key in list(self.keys.items())[:limit]:
-                self.symbols_attempted += 1
-                await self._scan_one(sym, key, "CORE")
-                scanned += 1
-                await asyncio.sleep(0.08)
-            # EXPLOSION is independent and runs only for the configured curated universe.
-            for sym, key in list(self.explosion_keys.items())[:limit]:
-                self.symbols_attempted += 1
-                await self._scan_one(sym, key, "EXPLOSION")
-                scanned += 1
-                await asyncio.sleep(0.08)
+            # Bounded concurrency reduces serial scan latency without launching an
+            # unbounded burst against Upstox. Each symbol still uses closed candles.
+            jobs = [(sym, key, "CORE") for sym, key in list(self.keys.items())[:limit]]
+            jobs += [(sym, key, "EXPLOSION") for sym, key in list(self.explosion_keys.items())[:limit]]
+            self.symbols_attempted = len(jobs)
+            semaphore = asyncio.Semaphore(self.scan_concurrency)
+            async def run_job(sym, key, kind):
+                async with semaphore:
+                    await self._scan_one(sym, key, kind)
+            await asyncio.gather(*(run_job(sym, key, kind) for sym, key, kind in jobs))
+            scanned = len(jobs)
         finally:
+            self.last_scan_duration_seconds = round(monotonic_time.monotonic() - scan_started_monotonic, 2)
             self.scan_in_progress = False
             self.last_scan_completed = now_ist().isoformat()
             self.last_scan = self.last_scan_completed
@@ -289,6 +302,9 @@ class SignalEngine:
             "last_scan_started": self.last_scan_started,
             "last_scan_completed": self.last_scan_completed,
             "last_scan": self.last_scan,
+            "last_scan_duration_seconds": self.last_scan_duration_seconds,
+            "scan_concurrency": self.scan_concurrency,
+            "historical_cache_entries": len(self.historical_cache),
             "symbols_attempted": self.symbols_attempted,
             "symbols_failed": self.symbols_failed,
             "last_error": self.last_error,
