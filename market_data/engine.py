@@ -314,7 +314,7 @@ class SignalEngine:
             "stage_counts": dict(self.stage_counts),
         }
     async def send_daily_summary_if_due(self):
-        """Send one end-of-session summary per trading date, using IST session bounds."""
+        """Send one end-of-session plain-text summary per trading date."""
         now = now_ist()
         bounds = self.calendar.session_bounds(now.date())
         if not bounds or now < bounds[1] or self.last_daily_summary_date == now.date().isoformat():
@@ -330,30 +330,34 @@ class SignalEngine:
         for candidate in today_candidates:
             status_counts[candidate.status] = status_counts.get(candidate.status, 0) + 1
         top_rejections = sorted(self.rejections.items(), key=lambda item: item[1], reverse=True)[:5]
-        reject_lines = "\n".join(f"• {name.replace('_', ' ')}: {count}" for name, count in top_rejections) or "• No rejection counts recorded"
-        signal_lines = "\n".join(
+        reject_lines = "\\n".join(f"• {name.replace('_', ' ')}: {count}" for name, count in top_rejections) or "• No rejection counts recorded"
+        signal_lines = "\\n".join(
             f"• {s.get('time', '')[11:16]} IST | {s.get('symbol', '?')} | {s.get('direction', '?')} | {s.get('engine', '?')} | {s.get('score', 0)}/100"
             for s in daily_signals[-10:]
         ) or "• No qualified signals recorded today"
         status_line = " | ".join(f"{name}: {count}" for name, count in sorted(status_counts.items())) or "No candidates recorded"
         message = (
-            f"📊 <b>NSE F&amp;O DAILY SUMMARY</b>\n"
-            f"📅 <b>{now.strftime('%d %b %Y')}</b> | Market close: <b>{bounds[1].strftime('%H:%M IST')}</b>\n\n"
-            f"📈 <b>SIGNAL STATISTICS</b>\n"
-            f"• Total confirmed signals: <b>{len(daily_signals)}</b>\n"
-            f"• LONG: <b>{long_count}</b> | SHORT: <b>{short_count}</b>\n"
-            f"• CORE: <b>{core_count}</b> | EXPLOSION: <b>{explosion_count}</b>\n\n"
-            f"🎯 <b>CANDIDATE STATUS (current in-memory records)</b>\n"
-            f"• {status_line}\n\n"
-            f"🧾 <b>TODAY'S SIGNALS</b>\n{signal_lines}\n\n"
-            f"🔎 <b>TOP REJECTION COUNTS</b>\n{reject_lines}\n\n"
-            f"🛠 <b>DATA / ENGINE</b>\n"
-            f"• Symbols attempted in last scan: <b>{self.symbols_attempted}</b>\n"
-            f"• Data requests / failures: <b>{self.data_requests} / {self.data_request_failures}</b>\n"
-            f"• Last scan: <b>{self.last_scan_completed or 'N/A'}</b>\n\n"
-            f"Note: signal and candidate history is in process memory; a service restart can reset this report's counts. This is a signal-only report, not realized P&amp;L."
+            "📊 NSE F&O DAILY SUMMARY\\n"
+            f"📅 {now.strftime('%d %b %Y')} | Market close: {bounds[1].strftime('%H:%M IST')}\\n"
+            "\\n📈 SIGNAL STATISTICS\\n"
+            f"• Total confirmed signals: {len(daily_signals)}\\n"
+            f"• LONG: {long_count} | SHORT: {short_count}\\n"
+            f"• CORE: {core_count} | EXPLOSION: {explosion_count}\\n"
+            "\\n🎯 CANDIDATE STATUS (current in-memory records)\\n"
+            f"• {status_line}\\n"
+            "\\n🧾 TODAY'S SIGNALS\\n"
+            f"{signal_lines}\\n"
+            "\\n🔎 TOP REJECTION COUNTS\\n"
+            f"{reject_lines}\\n"
+            "\\n🛠 DATA / ENGINE\\n"
+            f"• Symbols attempted in last scan: {self.symbols_attempted}\\n"
+            f"• Data requests / failures: {self.data_requests} / {self.data_request_failures}\\n"
+            f"• Last scan: {self.last_scan_completed or 'N/A'}\\n\\n"
+            "Note: signal and candidate history is held in process memory; a service restart can reset this report's counts. "
+            "This is a signal-only report, not realized P&L."
         )
-        delivered = await self.telegram.send(message, parse_mode="HTML")
+        # Plain text intentionally avoids parse-mode mismatches and HTML entity leakage.
+        delivered = await self.telegram.send(message)
         if delivered:
             self.last_daily_summary_date = day_key
             log.info("Daily market-close summary delivered for %s", day_key)
