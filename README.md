@@ -36,8 +36,9 @@ Free instances may sleep and can miss market-time work. A periodic `/ping` reque
 
 ## Strict signal-quality profile (optimized defaults)
 
-The default profile is `FILTER_PROFILE=strict` with `MIN_SCORE=80` and
-`EXPLOSION_MIN_SCORE=80`. The CORE engine applies hard rejection gates for ADX
+The default profile is `FILTER_PROFILE=strict` with `MIN_SCORE=75` and
+`EXPLOSION_MIN_SCORE=80`. The scanner uses bounded concurrency and caches historical
+warm-up candles for 30 minutes while refreshing intraday candles each scan. The CORE engine applies hard rejection gates for ADX
 strength/rising behavior, +DI/-DI alignment, relative volume, candle body and
 close location, overextension from EMA9/EMA21, VWAP side, RSI range, and stronger
 volume/close-location requirements on breakouts. The 15-minute trend confirmation
