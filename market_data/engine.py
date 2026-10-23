@@ -187,6 +187,7 @@ class SignalEngine:
         await self.scan_lock.acquire()
         self.stage_counts={}
         self.last_symbol_diagnostics={}
+        self.last_error=None
         self.last_scan_started = now_ist().isoformat()
         self.scan_in_progress = True
         self.symbols_attempted = 0
@@ -262,6 +263,9 @@ class SignalEngine:
             "filter_profile": getattr(self.settings, "filter_profile", "strict"),
             "reject_reasons": self.rejections,
             "stage_counts": self.stage_counts,
-            "last_symbol_diagnostics": list(self.last_symbol_diagnostics.values())[-10:],
+            "last_symbol_diagnostics": (
+                [d for d in self.last_symbol_diagnostics.values() if d.get("engine")=="CORE"][-5:]
+                + [d for d in self.last_symbol_diagnostics.values() if d.get("engine")=="EXPLOSION"][-5:]
+            ),
             "signal_only": True,
         }
