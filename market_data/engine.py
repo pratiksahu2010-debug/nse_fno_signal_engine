@@ -200,7 +200,7 @@ class SignalEngine:
         self.stage_counts["signal_created"]=self.stage_counts.get("signal_created",0)+1
         self.last_signal_time[(symbol, engine)] = bar
         self.last_signal_bar[k]=str(bar);self.signals.append({"symbol":symbol,"engine":engine,"score":result.score,"direction":result.direction,"setup":result.setup,"time":str(bar),"metrics":result.metrics,"score_reasons":result.reasons,"score_components":result.metrics.get("score_components",{}),"hard_gates":result.metrics.get("hard_gates",{}),"rejects":result.rejects})
-        await self.telegram.send(self.format_signal(candidate,result))
+        await self.telegram.send(self.format_signal(candidate, result), parse_mode="HTML")
         return result
     @staticmethod
     def format_signal(c, r):
@@ -353,7 +353,7 @@ class SignalEngine:
             f"• Last scan: <b>{self.last_scan_completed or 'N/A'}</b>\\n\\n"
             f"Note: signal and candidate history is in process memory; a service restart can reset this report's counts. This is a signal-only report, not realized P&amp;L."
         )
-        delivered = await self.telegram.send(message)
+        delivered = await self.telegram.send(message, parse_mode="HTML")
         if delivered:
             self.last_daily_summary_date = day_key
             log.info("Daily market-close summary delivered for %s", day_key)
