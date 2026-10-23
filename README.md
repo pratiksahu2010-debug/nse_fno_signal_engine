@@ -11,7 +11,7 @@ This code does not place orders. Signals are based on completed 5-minute candles
 3. Copy `.env.example` values into Render Environment. Set `UPSTOX_ACCESS_TOKEN`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, and optionally `TELEGRAM_ADMIN_IDS` (comma-separated Telegram numeric IDs). Never commit credentials.
 4. Populate `config/nse_holidays.json` with official NSE holidays/special sessions. Resolve the instruments and check `/health`.
 5. For explosion symbols, supply a verified list to `config/explosion_universe.json`. Do not treat the empty default as a generated universe.
-6. Open `/ping`, `/health`, and `/status`. This deployment sends outbound Telegram alerts; inbound Telegram command polling is disabled, so use the HTTP endpoints for health/status checks.
+6. Open `/ping`, `/health`, and `/status`. On startup, the service verifies the Telegram bot token with `getMe` and sends one Telegram delivery-test message to `TELEGRAM_CHAT_ID`. Check `/health.components.telegram_delivery` or `/status.telegram_delivery` for message counts and the last delivery error. Inbound Telegram command polling is disabled, so use HTTP endpoints for health/status checks. For a private chat, open the bot in Telegram and press Start before expecting it to message you.
 
 ## Build and test locally
 ```bash
