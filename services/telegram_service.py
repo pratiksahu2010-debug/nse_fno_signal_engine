@@ -51,7 +51,7 @@ class TelegramService:
             raise RuntimeError(f"{method}: {description}")
         return data.get("result")
 
-    async def send(self, text, chat_id=None):
+    async def send(self, text, chat_id=None, parse_mode=None):
         chat = str(chat_id or self.chat_id).strip()
         self.last_attempt_at = now_ist().isoformat()
         self.last_method = "sendMessage"
@@ -68,7 +68,12 @@ class TelegramService:
         try:
             await self.call(
                 "sendMessage",
-                {"chat_id": chat, "text": str(text), "disable_web_page_preview": True},
+                {
+                    "chat_id": chat,
+                    "text": str(text),
+                    "disable_web_page_preview": True,
+                    **({"parse_mode": parse_mode} if parse_mode else {}),
+                },
             )
             self.messages_sent += 1
             self.last_success_at = now_ist().isoformat()
