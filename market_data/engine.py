@@ -28,7 +28,8 @@ class SignalEngine:
         diag_key=f"{symbol}:{engine}"
         diag={"symbol":symbol,"engine":engine,"stage":"fetching","candles_returned":0,"closed_candles":0,"latest_closed_candle":None,"latest_candle_age_seconds":None,"reason":None}
         self.last_symbol_diagnostics[diag_key]=diag
-        self.data_requests += 1
+        # One historical plus one intraday REST request are attempted per symbol.
+        self.data_requests += 2
         try:
             # Historical candles provide indicator warm-up; Upstox's separate intraday
             # endpoint supplies the current session. Historical-only responses can end
