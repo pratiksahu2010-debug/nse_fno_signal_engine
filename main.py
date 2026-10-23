@@ -148,6 +148,9 @@ async def lifespan(app: FastAPI):
             await engine.initialize()
         except Exception:
             log.exception("Instrument initialization failed")
+    # Verify Telegram token and destination at every deploy. This sends one
+    # explicit startup test so delivery failures are visible before a market signal.
+    await telegram.startup_check()
     # Signal-delivery-only mode: do not poll Telegram getUpdates.
     # Telegram remains enabled for outbound signal notifications via sendMessage.
     if settings.upstox_access_token:
@@ -204,6 +207,7 @@ async def health():
             "upstox_websocket": "disabled_not_connected",
             "websocket_enabled": False,
             "telegram": "configured" if settings.telegram_bot_token and settings.telegram_chat_id else "incomplete",
+            "telegram_delivery": telegram.status() if telegram else {},
             "telegram_admin": "configured" if settings.telegram_admin_ids else "missing_admin_id",
             "explosion_universe": "configured" if engine and engine.explosion_keys else "empty_or_not_resolved",
         },
