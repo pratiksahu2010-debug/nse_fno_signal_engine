@@ -79,7 +79,24 @@ class TelegramService:
             raise
         except Exception as exc:
             self.messages_failed += 1
-            self.last_error = str(exc)[:240] if isinstance(exc, RuntimeError) else type(exc).__name__
+            raw_error = str(exc) if isinstance(exc, RuntimeError) else type(exc).__name__
+            lowered = raw_error.lower()
+            if "can't send messages to the bot" in lowered or "cannot send messages to the bot" in lowered:
+                self.last_error = (
+                    "TELEGRAM_CHAT_ID points to a bot chat. Set it to your own numeric Telegram user ID "
+                    "or a group/channel chat ID; then open this bot and press Start (or add it to the group)."
+                )
+            elif "chat not found" in lowered:
+                self.last_error = (
+                    "Telegram chat not found. Verify TELEGRAM_CHAT_ID; for a private chat, open this bot "
+                    "and press Start before sending alerts."
+                )
+            elif "bot was blocked by the user" in lowered:
+                self.last_error = "Telegram bot was blocked by the destination user; unblock it and press Start."
+            elif "not enough rights" in lowered or "forbidden" in lowered and "administrator" in lowered:
+                self.last_error = "Telegram bot lacks permission in the target group/channel; grant send-message permission."
+            else:
+                self.last_error = raw_error[:240]
             log.error("Telegram message delivery failed: %s", self.last_error)
             return False
 
@@ -104,9 +121,16 @@ class TelegramService:
             self.last_error = str(exc)[:240] if isinstance(exc, RuntimeError) else type(exc).__name__
             log.error("Telegram startup verification failed: %s", self.last_error)
             return False
-        return await self.send(
+        delivered = await self.send(
             "NSE F&O Signal Engine online. Telegram delivery test passed; signal alerts are enabled."
         )
+        if not delivered:
+            log.error(
+                "Telegram startup test failed. In Render, set TELEGRAM_CHAT_ID to a human user's numeric ID "
+                "or a group/channel ID, not a bot username or bot ID. For private delivery, the user must "
+                "open this bot and press Start."
+            )
+        return delivered
 
     def status(self):
         return {
