@@ -16,7 +16,7 @@ from engines.indicators import add_indicators
 from engines.scoring import score_core
 
 
-def replay(path, min_score=80, *, profile="strict", cost_bps_per_side=0.0,
+def replay(path, min_score=75, *, profile="strict", cost_bps_per_side=0.0,
            slippage_bps_per_side=0.0, max_hold_bars=12):
     if cost_bps_per_side < 0 or slippage_bps_per_side < 0:
         raise ValueError("Costs and slippage must be non-negative")
@@ -115,7 +115,7 @@ def replay(path, min_score=80, *, profile="strict", cost_bps_per_side=0.0,
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("csv")
-    parser.add_argument("--min-score", type=int, default=80)
+    parser.add_argument("--min-score", type=int, default=75)
     parser.add_argument("--profile", choices=("strict", "balanced"), default="strict")
     parser.add_argument("--cost-bps-per-side", type=float, default=0.0)
     parser.add_argument("--slippage-bps-per-side", type=float, default=0.0)
