@@ -11,7 +11,7 @@ This code does not place orders. Signals are based on completed 5-minute candles
 3. Copy `.env.example` values into Render Environment. Set `UPSTOX_ACCESS_TOKEN`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, and optionally `TELEGRAM_ADMIN_IDS` (comma-separated Telegram numeric IDs). Never commit credentials.
 4. Populate `config/nse_holidays.json` with official NSE holidays/special sessions. Resolve the instruments and check `/health`.
 5. For explosion symbols, supply a verified list to `config/explosion_universe.json`. Do not treat the empty default as a generated universe.
-6. Open `/ping`, `/health`, `/status`. Telegram commands: `/start`, `/status`, `/scan`, `/signal SYMBOL`, `/oc SYMBOL`, `/pending`, `/today`, `/watchlist`, `/why SYMBOL`, `/explode`, `/settings`, `/stats`, `/pause`, `/resume`, `/settoken TOKEN` (admin only).
+6. Open `/ping`, `/health`, and `/status`. This deployment sends outbound Telegram alerts; inbound Telegram command polling is disabled, so use the HTTP endpoints for health/status checks.
 
 ## Build and test locally
 ```bash
@@ -26,7 +26,7 @@ uvicorn main:app --host 0.0.0.0 --port 8000
 ## Historical replay
 CSV must contain `ts,open,high,low,close,volume`; optional `oi`. Example:
 `python -m replay.backtest sample_candles.csv --min-score 70`
-Replay is an educational close/next-open approximation, not options backtest; it currently excludes fees/slippage and must not be used as a profitability claim.
+Replay is an educational close/next-open approximation, not an options backtest. Estimated fees/slippage can be configured, but instrument-specific charges and option-premium P&L are not fully modeled; do not treat replay as a profitability claim.
 
 ## Current transport caveat
 Upstox Market Data Feed V3 uses protobuf binary frames. The WebSocket adapter is a fail-closed integration boundary; runtime currently uses REST polling of closed candles. Do not describe this build as websocket-connected. Integrate the current official Upstox protobuf schema/SDK and test reconnect/subscription limits before enabling WebSocket mode.
