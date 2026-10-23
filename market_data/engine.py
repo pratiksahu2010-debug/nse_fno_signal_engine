@@ -321,5 +321,6 @@ class SignalEngine:
                 [d for d in self.last_symbol_diagnostics.values() if d.get("engine")=="CORE"][-5:]
                 + [d for d in self.last_symbol_diagnostics.values() if d.get("engine")=="EXPLOSION"][-5:]
             ),
+            "telegram_delivery": self.telegram.status() if hasattr(self.telegram, "status") else {"configured": bool(getattr(self.telegram, "token", ""))},
             "signal_only": True,
         }
