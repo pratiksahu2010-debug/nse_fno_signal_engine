@@ -15,7 +15,7 @@ class SignalEngine:
         self.scan_concurrency=max(1,min(8,int(getattr(settings,"scan_concurrency",4))))
         self.historical_cache_ttl_sec=max(60,int(getattr(settings,"historical_cache_ttl_sec",1800)))
         self.historical_cache={};self.last_scan_duration_seconds=None
-        self.keys={};self.explosion_keys={};self.candles={};self.last_signal_bar={};self.last_signal_time={};self.candidates={};self.signals=[];self.last_scan=None;self.last_scan_started=None;self.last_scan_completed=None;self.scan_in_progress=False;self.symbols_attempted=0;self.symbols_failed=0;self.last_data_fetch=None;self.data_requests=0;self.data_request_failures=0;self.last_error=None;self.paused=False;self.ws_connected=False;self.last_tick=None;self.rejections={};self.stage_counts={};self.last_symbol_diagnostics={};self.scan_lock=asyncio.Lock()
+        self.keys={};self.explosion_keys={};self.candles={};self.last_signal_bar={};self.last_signal_time={};self.candidates={};self.signals=[];self.last_scan=None;self.last_scan_started=None;self.last_scan_completed=None;self.scan_in_progress=False;self.symbols_attempted=0;self.symbols_failed=0;self.last_data_fetch=None;self.data_requests=0;self.data_request_failures=0;self.last_error=None;self.paused=False;self.ws_connected=False;self.last_tick=None;self.rejections={};self.stage_counts={};self.last_symbol_diagnostics={};self.scan_lock=asyncio.Lock();self.last_daily_summary_date=None
     async def initialize(self):
         self.keys=await self.resolver.resolve_many()
         try:
@@ -203,12 +203,58 @@ class SignalEngine:
         await self.telegram.send(self.format_signal(candidate,result))
         return result
     @staticmethod
-    def format_signal(c,r):
-        return (f"{c.engine} {c.direction} | {c.symbol}\nSetup: {c.setup} | Score: {c.score}/100\n"
-                f"Signal candle close: {c.signal_close:.2f}\nEntry zone (next 5m only): {c.entry_low:.2f} - {c.entry_high:.2f}\n"
-                f"SL: {c.stop:.2f} | T1: {c.t1:.2f} | T2: {c.t2:.2f}\n"
-                f"Closed-candle signal; not an order. Confirm option liquidity/spread and position size before trading.\n"
-                f"Reasons: {', '.join(r.reasons) or '—'}\nReject gates: {', '.join(r.rejects) or 'none'}")
+    def format_signal(c, r):
+        """Telegram alert with a consistent, human-readable F&O signal breakdown."""
+        from datetime import timezone
+        m = r.metrics or {}
+        ist_time = c.signal_time.astimezone(now_ist().tzinfo) if c.signal_time.tzinfo else c.signal_time.replace(tzinfo=now_ist().tzinfo)
+        utc_time = c.signal_time.astimezone(timezone.utc)
+        direction_icon = "🟢" if c.direction == "LONG" else "🔴"
+        direction_label = "LONG / BULLISH" if c.direction == "LONG" else "SHORT / BEARISH"
+        entry = c.entry_high if c.direction == "LONG" else c.entry_low
+        risk = abs(entry - c.stop)
+        rr1 = abs(c.t1 - entry) / risk if risk else 0.0
+        rr2 = abs(c.t2 - entry) / risk if risk else 0.0
+        def val(key, digits=2):
+            value = m.get(key)
+            try:
+                return f"{float(value):.{digits}f}" if value is not None else "N/A"
+            except (TypeError, ValueError):
+                return "N/A"
+        volume_ratio = val("rvol", 2)
+        reasons = [reason for reason in (r.reasons or []) if not reason.endswith(tuple(f":+{n}" for n in range(1, 101)))]
+        reasons_text = "\\n".join(f"  🟢 {reason.replace('_', ' ')}" for reason in (reasons[:5] or ["Technical gates passed"]))
+        rejects_text = ", ".join(r.rejects or []) or "None recorded"
+        return (
+            f"{direction_icon} <b>{direction_label} SIGNAL</b> {'⬆️' if c.direction == 'LONG' else '⬇️'}\\n"
+            f"<b>{c.symbol}</b> | NSE F&O underlying | <b>CONFIRMED</b>\\n\\n"
+            f"🕒 <b>SIGNAL DETAILS</b>\\n"
+            f"• Signal candle: <b>{ist_time.strftime('%d %b %Y, %H:%M IST')}</b>\\n"
+            f"• UTC: <b>{utc_time.strftime('%Y-%m-%d %H:%M UTC')}</b>\\n"
+            f"• Engine: <b>{c.engine}</b> | Setup: <b>{c.setup}</b> | Score: <b>{c.score}/100</b>\\n\\n"
+            f"🎯 <b>TRADE PLAN (UNDERLYING REFERENCE LEVELS)</b>\\n"
+            f"• Signal close: <b>{c.signal_close:.2f}</b>\\n"
+            f"• Entry zone (next 5-minute candle only): <b>{c.entry_low:.2f} – {c.entry_high:.2f}</b>\\n"
+            f"• Stop-loss (SL): <b>{c.stop:.2f}</b>\\n"
+            f"• Target 1 (TP1): <b>{c.t1:.2f}</b>\\n"
+            f"• Target 2 (TP2): <b>{c.t2:.2f}</b>\\n"
+            f"• Reward:risk: <b>{rr1:.2f}R / {rr2:.2f}R</b>\\n"
+            f"• Entry window: <b>next 5-minute candle only</b>\\n\\n"
+            f"📊 <b>TECHNICAL INDICATORS</b>\\n"
+            f"• EMA 9 / EMA 21: <b>{val('ema9')} / {val('ema21')}</b>\\n"
+            f"• RSI (14): <b>{val('rsi14')}</b> | ADX (14): <b>{val('adx14')}</b>\\n"
+            f"• VWAP: <b>{val('vwap')}</b> | ATR (14): <b>{val('atr14', 4)}</b>\\n"
+            f"• RVOL: <b>{volume_ratio}x</b> | +DI / −DI: <b>{val('plus_di')} / {val('minus_di')}</b>\\n"
+            f"• EMA9 extension: <b>{val('ema9_extension_atr', 2)} ATR</b>\\n"
+            f"• Candle range: <b>{(c.signal_high - c.signal_low):.2f}</b>\\n"
+            f"• Body / candle range: <b>{float(m.get('body_ratio') or 0) * 100:.0f}%</b> | Close location: <b>{(float(m.get('clv') or 0) + 1) * 50:.0f}%</b>\\n\\n"
+            f"🧠 <b>WHY THIS SIGNAL?</b>\\n{reasons_text}\\n\\n"
+            f"⚠️ <b>WARNINGS / CONDITIONS</b>\\n"
+            f"• Rejection gates: <b>{rejects_text}</b>\\n"
+            f"• Invalidation: stop-loss level <b>{c.stop:.2f}</b>\\n\\n"
+            f"🔒 <b>Signal only — no order is placed automatically.</b>\\n"
+            f"Underlying levels are not option-premium prices or guaranteed fills. Check option strike, liquidity, spread, expiry and risk before acting."
+        )
     async def _scan_one(self,symbol,key,engine):
         """Isolate per-symbol failures so one malformed response cannot abort a full scan."""
         try:
@@ -267,15 +313,62 @@ class SignalEngine:
             "symbols_failed": self.symbols_failed,
             "stage_counts": dict(self.stage_counts),
         }
+    async def send_daily_summary_if_due(self):
+        """Send one end-of-session summary per trading date, using IST session bounds."""
+        now = now_ist()
+        bounds = self.calendar.session_bounds(now.date())
+        if not bounds or now < bounds[1] or self.last_daily_summary_date == now.date().isoformat():
+            return False
+        day_key = now.date().isoformat()
+        daily_signals = [s for s in self.signals if str(s.get("time", "")).startswith(day_key)]
+        long_count = sum(1 for s in daily_signals if s.get("direction") == "LONG")
+        short_count = sum(1 for s in daily_signals if s.get("direction") == "SHORT")
+        core_count = sum(1 for s in daily_signals if s.get("engine") == "CORE")
+        explosion_count = sum(1 for s in daily_signals if s.get("engine") == "EXPLOSION")
+        today_candidates = [c for c in self.candidates.values() if c.signal_time.date().isoformat() == day_key]
+        status_counts = {}
+        for candidate in today_candidates:
+            status_counts[candidate.status] = status_counts.get(candidate.status, 0) + 1
+        top_rejections = sorted(self.rejections.items(), key=lambda item: item[1], reverse=True)[:5]
+        reject_lines = "\\n".join(f"• {name.replace('_', ' ')}: {count}" for name, count in top_rejections) or "• No rejection counts recorded"
+        signal_lines = "\\n".join(
+            f"• {s.get('time', '')[11:16]} IST | {s.get('symbol', '?')} | {s.get('direction', '?')} | {s.get('engine', '?')} | {s.get('score', 0)}/100"
+            for s in daily_signals[-10:]
+        ) or "• No qualified signals recorded today"
+        status_line = " | ".join(f"{name}: {count}" for name, count in sorted(status_counts.items())) or "No candidates recorded"
+        message = (
+            f"📊 <b>NSE F&amp;O DAILY SUMMARY</b>\\n"
+            f"📅 <b>{now.strftime('%d %b %Y')}</b> | Market close: <b>{bounds[1].strftime('%H:%M IST')}</b>\\n\\n"
+            f"📈 <b>SIGNAL STATISTICS</b>\\n"
+            f"• Total confirmed signals: <b>{len(daily_signals)}</b>\\n"
+            f"• LONG: <b>{long_count}</b> | SHORT: <b>{short_count}</b>\\n"
+            f"• CORE: <b>{core_count}</b> | EXPLOSION: <b>{explosion_count}</b>\\n\\n"
+            f"🎯 <b>CANDIDATE STATUS (current in-memory records)</b>\\n"
+            f"• {status_line}\\n\\n"
+            f"🧾 <b>TODAY'S SIGNALS</b>\\n{signal_lines}\\n\\n"
+            f"🔎 <b>TOP REJECTION COUNTS</b>\\n{reject_lines}\\n\\n"
+            f"🛠 <b>DATA / ENGINE</b>\\n"
+            f"• Symbols attempted in last scan: <b>{self.symbols_attempted}</b>\\n"
+            f"• Data requests / failures: <b>{self.data_requests} / {self.data_request_failures}</b>\\n"
+            f"• Last scan: <b>{self.last_scan_completed or 'N/A'}</b>\\n\\n"
+            f"Note: signal and candidate history is in process memory; a service restart can reset this report's counts. This is a signal-only report, not realized P&amp;L."
+        )
+        delivered = await self.telegram.send(message)
+        if delivered:
+            self.last_daily_summary_date = day_key
+            log.info("Daily market-close summary delivered for %s", day_key)
+        return delivered
+
     async def run_loop(self):
-        # Recheck closed candles every 60 seconds. A five-minute-only schedule can
-        # miss a candle when the provider publishes it late, then wait another full
-        # interval before seeing it. Historical caching keeps this polling lighter.
+        # Poll closed 5-minute candles during the session and send the close report
+        # once the configured NSE session end has passed.
         while True:
             cycle_started = monotonic_time.monotonic()
             try:
                 if self.calendar.is_market_open():
                     await self.scan()
+                else:
+                    await self.send_daily_summary_if_due()
                 elapsed = monotonic_time.monotonic() - cycle_started
                 await asyncio.sleep(max(5.0, 60.0 - elapsed))
             except asyncio.CancelledError:
