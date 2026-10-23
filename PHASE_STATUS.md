@@ -12,7 +12,8 @@ This is the consolidated project package. CORE strategy, explosion strategy logi
 
 ## Optimization pass (2026-10-22)
 
-- Default filter profile changed to `strict`; CORE and EXPLOSION minimum score defaults are 80.
+- Current defaults are `FILTER_PROFILE=strict`, CORE `MIN_SCORE=75`, and EXPLOSION `EXPLOSION_MIN_SCORE=80`.
+- Follow-up latency pass: bounded concurrent scans (default 4, max 8), 30-minute historical warm-up cache, and a one-minute closed-candle rescan cycle. Intraday candles are refreshed on every scan; no unfinished candles are used.
 - Added hard gates for ADX level/rising state, directional DI spread, relative volume, candle body/close location, EMA extension, and breakout-specific volume/close quality.
 - Added fail-closed 15-minute confirmation when the required closed-bar history is missing.
 - Added per-symbol/engine cooldown and protection against overwriting pending/active candidates.
