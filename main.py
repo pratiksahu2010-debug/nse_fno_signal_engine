@@ -175,8 +175,16 @@ async def root():
 async def ping():
     return {
         "status": "ok", "time_ist": now_ist().isoformat(),
-        "market_open": calendar.is_market_open(), "ws_connected": False,
-        "transport": "rest_closed_candle_polling", "last_tick_age_sec": None,
+        "market_open": calendar.is_market_open(),
+        "market_data_transport": "rest_closed_candle_polling",
+        "websocket_enabled": False,
+        "ws_connected": False,
+        "websocket_note": "WebSocket is not implemented/enabled; false is intentional.",
+        "rest_polling_configured": bool(settings.upstox_access_token),
+        "last_scan_started": engine.last_scan_started if engine else None,
+        "last_scan_completed": engine.last_scan_completed if engine else None,
+        "scan_in_progress": engine.scan_in_progress if engine else False,
+        "last_data_fetch": engine.last_data_fetch if engine else None,
     }
 
 
@@ -192,7 +200,9 @@ async def health():
         "engine": state,
         "components": {
             "upstox_rest": "configured" if settings.upstox_access_token else "missing_token",
-            "upstox_websocket": "not_enabled_protobuf_decoder_required",
+            "market_data_transport": "rest_closed_candle_polling",
+            "upstox_websocket": "disabled_not_connected",
+            "websocket_enabled": False,
             "telegram": "configured" if settings.telegram_bot_token and settings.telegram_chat_id else "incomplete",
             "telegram_admin": "configured" if settings.telegram_admin_ids else "missing_admin_id",
             "explosion_universe": "configured" if engine and engine.explosion_keys else "empty_or_not_resolved",
