@@ -30,29 +30,54 @@ class SignalEngine:
         self.last_symbol_diagnostics[diag_key]=diag
         self.data_requests += 1
         try:
-            candles = await self.rest.historical_candles(key, 5, days=7)
+            # Historical candles provide indicator warm-up; Upstox's separate intraday
+            # endpoint supplies the current session. Historical-only responses can end
+            # on the previous trading day even when the request succeeds.
+            historical = await self.rest.historical_candles(key, 5, days=7)
+            intraday = await self.rest.intraday_candles(key, 5)
             self.last_data_fetch = now_ist().isoformat()
-            diag["candles_returned"]=len(candles)
-            diag["stage"]="history_fetched"
-            self.stage_counts["history_fetched"]=self.stage_counts.get("history_fetched",0)+1
+            now = now_ist()
+            merged = {}
+            for candle in historical + intraday:
+                ts = candle.ts.astimezone(now.tzinfo) if candle.ts.tzinfo else candle.ts.replace(tzinfo=now.tzinfo)
+                candle.ts = ts
+                merged[ts] = candle
+            candles = [merged[ts] for ts in sorted(merged)]
+            today = now.date()
+            diag["historical_candles_returned"] = len(historical)
+            diag["intraday_candles_returned"] = len(intraday)
+            diag["current_session_candles"] = sum(1 for c in intraday if (c.ts.astimezone(now.tzinfo) if c.ts.tzinfo else c.ts.replace(tzinfo=now.tzinfo)).date() == today)
+            diag["candles_returned"] = len(candles)
+            diag["stage"] = "history_and_intraday_fetched"
+            self.stage_counts["history_and_intraday_fetched"] = self.stage_counts.get("history_and_intraday_fetched", 0) + 1
         except Exception as exc:
             self.data_request_failures += 1
             self.symbols_failed += 1
             self.last_error = f"{symbol}: {type(exc).__name__}: {exc}"
-            diag["stage"]="history_fetch_failed";diag["reason"]=type(exc).__name__
-            self.stage_counts["history_fetch_failed"]=self.stage_counts.get("history_fetch_failed",0)+1
-            log.warning("history failed %s: %s", symbol, exc)
+            diag["stage"] = "market_data_fetch_failed"; diag["reason"] = type(exc).__name__
+            self.stage_counts["market_data_fetch_failed"] = self.stage_counts.get("market_data_fetch_failed", 0) + 1
+            log.warning("market data failed %s: %s", symbol, exc)
             return None
-        # Ignore still-forming 5-minute candle; use the timestamp's start plus 5m and 2s grace.
-        now=now_ist(); closed=[]
+        # Ignore still-forming 5-minute candles; timestamps represent candle starts.
+        now = now_ist()
+        closed = []
         for c in candles:
-            ts=c.ts.astimezone(now.tzinfo) if c.ts.tzinfo else c.ts.replace(tzinfo=now.tzinfo)
-            if (now-ts).total_seconds()>=302: c.ts=ts;closed.append(c)
+            ts = c.ts.astimezone(now.tzinfo) if c.ts.tzinfo else c.ts.replace(tzinfo=now.tzinfo)
+            if (now - ts).total_seconds() >= 302:
+                c.ts = ts
+                closed.append(c)
         diag["closed_candles"]=len(closed)
         if closed:
             newest=closed[-1].ts
             diag["latest_closed_candle"]=newest.isoformat()
             diag["latest_candle_age_seconds"]=round((now-newest).total_seconds(),2)
+        # Fail closed when the newest completed candle is too old during an open
+        # session. A successful API response is not proof that its data is fresh.
+        if closed and (now - closed[-1].ts).total_seconds() > 12 * 60:
+            diag["stage"] = "stale_market_data"; diag["reason"] = "latest_closed_candle_older_than_12_minutes"
+            self.stage_counts["stale_market_data"] = self.stage_counts.get("stale_market_data", 0) + 1
+            self.rejections["stale_market_data"] = self.rejections.get("stale_market_data", 0) + 1
+            return None
         if len(closed)<35:
             diag["stage"]="insufficient_closed_candles";diag["reason"]="insufficient_closed_candles"
             self.stage_counts["insufficient_closed_candles"]=self.stage_counts.get("insufficient_closed_candles",0)+1
