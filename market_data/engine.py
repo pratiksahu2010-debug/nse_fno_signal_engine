@@ -393,6 +393,7 @@ class SignalEngine:
             "explosion_symbols_resolved": len(self.explosion_keys),
             "signals_today": sum(1 for s in self.signals if str(s.get("time","")).startswith(now_ist().date().isoformat())),
             "signals_in_process_memory": len(self.signals),
+            "daily_summary_sent_for": self.last_daily_summary_date,
             "pending_candidates": sum(c.status == "PENDING" for c in self.candidates.values()),
             "active_candidates": sum(c.status == "ACTIVE" for c in self.candidates.values()),
             "scan_in_progress": self.scan_in_progress,
