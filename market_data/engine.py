@@ -12,7 +12,7 @@ log=logging.getLogger(__name__)
 class SignalEngine:
     def __init__(self,settings,rest,resolver,telegram,calendar):
         self.settings=settings;self.rest=rest;self.resolver=resolver;self.telegram=telegram;self.calendar=calendar
-        self.keys={};self.explosion_keys={};self.candles={};self.last_signal_bar={};self.last_signal_time={};self.candidates={};self.signals=[];self.last_scan=None;self.last_scan_started=None;self.last_scan_completed=None;self.scan_in_progress=False;self.symbols_attempted=0;self.symbols_failed=0;self.last_data_fetch=None;self.data_requests=0;self.data_request_failures=0;self.last_error=None;self.paused=False;self.ws_connected=False;self.last_tick=None;self.rejections={}
+        self.keys={};self.explosion_keys={};self.candles={};self.last_signal_bar={};self.last_signal_time={};self.candidates={};self.signals=[];self.last_scan=None;self.last_scan_started=None;self.last_scan_completed=None;self.scan_in_progress=False;self.symbols_attempted=0;self.symbols_failed=0;self.last_data_fetch=None;self.data_requests=0;self.data_request_failures=0;self.last_error=None;self.paused=False;self.ws_connected=False;self.last_tick=None;self.rejections={};self.stage_counts={};self.last_symbol_diagnostics={};self.scan_lock=asyncio.Lock()
     async def initialize(self):
         self.keys=await self.resolver.resolve_many()
         try:
@@ -25,14 +25,22 @@ class SignalEngine:
         if not self.keys:log.warning("No symbols resolved; configure/verify instrument master")
         log.info("Resolved CORE=%d EXPLOSION=%d",len(self.keys),len(self.explosion_keys))
     async def scan_symbol(self,symbol,key,engine="CORE"):
+        diag_key=f"{symbol}:{engine}"
+        diag={"symbol":symbol,"engine":engine,"stage":"fetching","candles_returned":0,"closed_candles":0,"latest_closed_candle":None,"latest_candle_age_seconds":None,"reason":None}
+        self.last_symbol_diagnostics[diag_key]=diag
         self.data_requests += 1
         try:
             candles = await self.rest.historical_candles(key, 5, days=7)
             self.last_data_fetch = now_ist().isoformat()
+            diag["candles_returned"]=len(candles)
+            diag["stage"]="history_fetched"
+            self.stage_counts["history_fetched"]=self.stage_counts.get("history_fetched",0)+1
         except Exception as exc:
             self.data_request_failures += 1
             self.symbols_failed += 1
             self.last_error = f"{symbol}: {type(exc).__name__}: {exc}"
+            diag["stage"]="history_fetch_failed";diag["reason"]=type(exc).__name__
+            self.stage_counts["history_fetch_failed"]=self.stage_counts.get("history_fetch_failed",0)+1
             log.warning("history failed %s: %s", symbol, exc)
             return None
         # Ignore still-forming 5-minute candle; use the timestamp's start plus 5m and 2s grace.
@@ -40,8 +48,19 @@ class SignalEngine:
         for c in candles:
             ts=c.ts.astimezone(now.tzinfo) if c.ts.tzinfo else c.ts.replace(tzinfo=now.tzinfo)
             if (now-ts).total_seconds()>=302: c.ts=ts;closed.append(c)
-        if len(closed)<35:return None
+        diag["closed_candles"]=len(closed)
+        if closed:
+            newest=closed[-1].ts
+            diag["latest_closed_candle"]=newest.isoformat()
+            diag["latest_candle_age_seconds"]=round((now-newest).total_seconds(),2)
+        if len(closed)<35:
+            diag["stage"]="insufficient_closed_candles";diag["reason"]="insufficient_closed_candles"
+            self.stage_counts["insufficient_closed_candles"]=self.stage_counts.get("insufficient_closed_candles",0)+1
+            self.rejections["insufficient_closed_candles"]=self.rejections.get("insufficient_closed_candles",0)+1
+            return None
         d=add_indicators(closed);last=d.iloc[-1];bar=last.ts
+        diag["stage"]="indicators_ready"
+        self.stage_counts["indicators_ready"]=self.stage_counts.get("indicators_ready",0)+1
         # Advance existing candidates exactly once per newly closed candle before evaluating new setups.
         for candidate in list(self.candidates.values()):
             if candidate.symbol==symbol and candidate.engine==engine and candidate.signal_time < bar:
@@ -52,16 +71,32 @@ class SignalEngine:
         from config.defaults import CORE_WINDOW_START, CORE_WINDOW_END, EXPLOSION_WINDOW_START, EXPLOSION_WINDOW_END
         local_bar=last.ts.astimezone(now.tzinfo) if last.ts.tzinfo else last.ts.replace(tzinfo=now.tzinfo)
         clock=local_bar.time().replace(tzinfo=None)
-        if engine=="CORE" and not (CORE_WINDOW_START<=clock<=CORE_WINDOW_END): return None
-        if engine=="EXPLOSION" and not (EXPLOSION_WINDOW_START<=clock<=EXPLOSION_WINDOW_END): return None
+        if engine=="CORE" and not (CORE_WINDOW_START<=clock<=CORE_WINDOW_END):
+            diag["stage"]="outside_core_window";diag["reason"]="outside_core_window"
+            self.stage_counts["outside_core_window"]=self.stage_counts.get("outside_core_window",0)+1
+            self.rejections["outside_core_window"]=self.rejections.get("outside_core_window",0)+1
+            return None
+        if engine=="EXPLOSION" and not (EXPLOSION_WINDOW_START<=clock<=EXPLOSION_WINDOW_END):
+            diag["stage"]="outside_explosion_window";diag["reason"]="outside_explosion_window"
+            self.stage_counts["outside_explosion_window"]=self.stage_counts.get("outside_explosion_window",0)+1
+            self.rejections["outside_explosion_window"]=self.rejections.get("outside_explosion_window",0)+1
+            return None
+        diag["stage"]="inside_time_window"
+        self.stage_counts["inside_time_window"]=self.stage_counts.get("inside_time_window",0)+1
         k=(symbol,engine)
-        if self.last_signal_bar.get(k)==str(bar):return None
+        if self.last_signal_bar.get(k)==str(bar):
+            diag["stage"]="duplicate_bar";diag["reason"]="duplicate_bar"
+            self.stage_counts["duplicate_bar"]=self.stage_counts.get("duplicate_bar",0)+1
+            self.rejections["duplicate_bar"]=self.rejections.get("duplicate_bar",0)+1
+            return None
         if engine=="CORE":
             # Require directionally aligned last CLOSED 15-minute bar; current partial 15m is excluded.
             d15=d.set_index("ts").resample("15min",label="left",closed="left").agg({"open":"first","high":"max","low":"min","close":"last","volume":"sum"}).dropna().reset_index()
             d15=d15[d15.ts + pd.Timedelta(minutes=15) <= pd.Timestamp(now - __import__("datetime").timedelta(seconds=2))]
             # Strict profile fails closed when higher-timeframe confirmation is not ready.
             if len(d15) < 22:
+                diag["stage"]="15m_confirmation_missing";diag["reason"]="15m_confirmation_missing"
+                self.stage_counts["15m_confirmation_missing"]=self.stage_counts.get("15m_confirmation_missing",0)+1
                 self.rejections["15m_confirmation_missing"] = self.rejections.get("15m_confirmation_missing", 0) + 1
                 return None
             d15["ema9"]=d15.close.ewm(span=9,adjust=False).mean();d15["ema21"]=d15.close.ewm(span=21,adjust=False).mean()
@@ -71,6 +106,8 @@ class SignalEngine:
             long_ltf = last.close > last.ema21 and last.ema9 > last.ema21
             short_ltf = last.close < last.ema21 and last.ema9 < last.ema21
             if not ((long_ltf and long_htf) or (short_ltf and short_htf)):
+                diag["stage"]="15m_confirmation_failed";diag["reason"]="15m_confirmation_failed"
+                self.stage_counts["15m_confirmation_failed"]=self.stage_counts.get("15m_confirmation_failed",0)+1
                 self.rejections["15m_confirmation_failed"] = self.rejections.get("15m_confirmation_failed", 0) + 1
                 return None
             oc_adj=0;oc_avail=False
@@ -82,24 +119,40 @@ class SignalEngine:
                     chain=await self.rest.option_chain(underlying,"current_week"); oc=assess_chain(chain,prelim.direction);oc_adj=oc.adjustment;oc_avail=oc.available
                 except Exception as exc:log.info("option chain unavailable %s: %s",symbol,exc)
             result=score_core(d,self.settings.min_score,oc_adj,oc_avail,profile=getattr(self.settings, "filter_profile", "strict"))
-        else: result=score_explosion(d,self.settings.explosion_min_score,profile=getattr(self.settings, "filter_profile", "strict"))
+            self.stage_counts["core_scoring_reached"]=self.stage_counts.get("core_scoring_reached",0)+1
+        else:
+            result=score_explosion(d,self.settings.explosion_min_score,profile=getattr(self.settings, "filter_profile", "strict"))
+            self.stage_counts["explosion_scoring_reached"]=self.stage_counts.get("explosion_scoring_reached",0)+1
+        diag["score"]=result.score
+        diag["score_rejects"]=list(result.rejects)
         for reject in result.rejects:self.rejections[reject]=self.rejections.get(reject,0)+1
-        if not result.direction:return None
+        if not result.direction:
+            diag["stage"]="score_rejected";diag["reason"]=",".join(result.rejects) or "no_direction"
+            self.stage_counts["score_rejected"]=self.stage_counts.get("score_rejected",0)+1
+            return None
+        diag["stage"]="score_qualified"
+        self.stage_counts["score_qualified"]=self.stage_counts.get("score_qualified",0)+1
         # Never overwrite a live candidate, even when a later setup appears on the same symbol.
         candidate_key = symbol + ":" + engine
         existing = self.candidates.get(candidate_key)
         if existing and existing.status in {"PENDING", "ACTIVE"}:
+            diag["stage"]="existing_candidate_open";diag["reason"]="existing_candidate_open"
+            self.stage_counts["existing_candidate_open"]=self.stage_counts.get("existing_candidate_open",0)+1
             self.rejections["existing_candidate_open"] = self.rejections.get("existing_candidate_open", 0) + 1
             return None
         # Cooldown is per symbol+engine and uses the timestamp of the closed signal candle.
         cooldown = 20 if engine == "EXPLOSION" else 30
         previous_signal = self.last_signal_time.get((symbol, engine))
         if previous_signal is not None and (bar - previous_signal).total_seconds() < cooldown * 60:
+            diag["stage"]="symbol_cooldown";diag["reason"]="symbol_cooldown"
+            self.stage_counts["symbol_cooldown"]=self.stage_counts.get("symbol_cooldown",0)+1
             self.rejections["symbol_cooldown"] = self.rejections.get("symbol_cooldown", 0) + 1
             return None
         candle=closed[-1]
         candidate=make_candidate(symbol,result.direction,engine,result.setup or engine,result.score,candle,float(last.atr14))
         self.candidates[candidate_key]=candidate
+        diag["stage"]="signal_created";diag["reason"]=None
+        self.stage_counts["signal_created"]=self.stage_counts.get("signal_created",0)+1
         self.last_signal_time[(symbol, engine)] = bar
         self.last_signal_bar[k]=str(bar);self.signals.append({"symbol":symbol,"engine":engine,"score":result.score,"direction":result.direction,"setup":result.setup,"time":str(bar),"metrics":result.metrics,"rejects":result.rejects})
         await self.telegram.send(self.format_signal(candidate,result))
@@ -117,6 +170,11 @@ class SignalEngine:
         if not self.keys:await self.initialize()
         start = len(self.signals)
         scanned = 0
+        if self.scan_lock.locked():
+            return {"status":"scan_already_in_progress","scanned":0,"signals":0}
+        await self.scan_lock.acquire()
+        self.stage_counts={}
+        self.last_symbol_diagnostics={}
         self.last_scan_started = now_ist().isoformat()
         self.scan_in_progress = True
         self.symbols_attempted = 0
@@ -137,6 +195,7 @@ class SignalEngine:
             self.scan_in_progress = False
             self.last_scan_completed = now_ist().isoformat()
             self.last_scan = self.last_scan_completed
+            self.scan_lock.release()
         return {
             "status": "ok",
             "scanned": scanned,
@@ -146,13 +205,19 @@ class SignalEngine:
             "data_requests": self.data_requests,
             "data_request_failures": self.data_request_failures,
             "symbols_failed": self.symbols_failed,
+            "stage_counts": dict(self.stage_counts),
         }
     async def run_loop(self):
         while True:
             try:
+                if self.calendar.is_market_open():
+                    await self.scan()
+                # Recalculate after scanning; using the pre-scan time delayed the next cycle
+                # by the scan duration (about a minute for 144 sequential REST requests).
                 now=now_ist()
-                if self.calendar.is_market_open(): await self.scan()
-                await asyncio.sleep(max(5,300-(now.minute%5)*60-now.second))
+                seconds_into_bucket=(now.minute%5)*60+now.second+now.microsecond/1_000_000
+                delay=max(1.0,300.0-seconds_into_bucket)
+                await asyncio.sleep(delay)
             except asyncio.CancelledError:raise
             except Exception as exc:self.last_error=str(exc);log.exception("scan loop error");await asyncio.sleep(10)
     def status(self):
@@ -183,5 +248,7 @@ class SignalEngine:
             "paused": self.paused or self.telegram.paused,
             "filter_profile": getattr(self.settings, "filter_profile", "strict"),
             "reject_reasons": self.rejections,
+            "stage_counts": self.stage_counts,
+            "last_symbol_diagnostics": list(self.last_symbol_diagnostics.values())[-10:],
             "signal_only": True,
         }
