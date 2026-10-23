@@ -22,7 +22,11 @@ def add_indicators(candles):
     mdi=100*pd.Series(minus,index=d.index).ewm(alpha=1/14,adjust=False).mean()/atr
     d["plus_di"]=pdi; d["minus_di"]=mdi; dx=100*(pdi-mdi).abs()/(pdi+mdi).replace(0,np.nan); d["adx14"]=dx.ewm(alpha=1/14,adjust=False,min_periods=14).mean()
     delta=c.diff(); gain=delta.clip(lower=0).ewm(alpha=1/14,adjust=False,min_periods=14).mean(); loss=(-delta.clip(upper=0)).ewm(alpha=1/14,adjust=False,min_periods=14).mean()
-    d["rsi14"]=100-100/(1+gain/loss.replace(0,np.nan))
+    rs=gain/loss.replace(0,np.nan)
+    d["rsi14"]=100-100/(1+rs)
+    # Handle monotonic runs and flat windows explicitly: zero average loss is RSI 100
+    # when gains exist, while a completely flat window is neutral at 50.
+    d["rsi14"]=d["rsi14"].where(loss>0, np.where(gain>0,100.0,50.0))
     d["roc10"]=c.pct_change(10)*100
     d["er10"]=c.diff(10).abs()/c.diff().abs().rolling(10).sum().replace(0,np.nan)
     d["vol_sma20"]=d.volume.rolling(20,min_periods=5).mean(); d["rvol"]=d.volume/d.vol_sma20.replace(0,np.nan)
