@@ -27,7 +27,7 @@ class Score:
 
 def score_core(
     df,
-    min_score: int = 80,
+    min_score: int = defaults.MIN_SCORE,
     option_adjustment: int = 0,
     option_available: bool = False,
     *,
@@ -190,7 +190,7 @@ def score_core(
     return Score(score, direction if not rejects else None, setup, reasons, rejects, metrics)
 
 
-def score_explosion(df, min_score: int = 80, *, profile: str = "strict") -> Score:
+def score_explosion(df, min_score: int = defaults.EXPLOSION_MIN_SCORE, *, profile: str = "strict") -> Score:
     """High-conviction impulse scanner; requires volume, range, body and close location."""
     if len(df) < 35:
         return Score(0, None, None, [], ["insufficient_history"], {})
