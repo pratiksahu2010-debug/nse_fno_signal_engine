@@ -55,3 +55,9 @@ Candidate management also prevents a new signal from overwriting a still-pending
 or active candidate for the same symbol/engine, enforces a per-symbol cooldown,
 and calculates target distances from the conservative edge of the advertised
 entry zone so reward:risk is not overstated.
+
+## Telegram signal format and market-close report
+
+Confirmed CORE and EXPLOSION alerts are formatted as readable Telegram HTML messages with signal timestamp (IST and UTC), symbol/engine/setup/score, signal close, next-5-minute entry zone, stop and two targets, calculated reward-to-risk, EMA 9/21, RSI, ADX, VWAP, ATR, RVOL, directional indicators, candle quality, reasons and rejection gates. Price levels are **underlying reference levels**, not option-premium prices; the service remains signal-only and does not place orders.
+
+The service also attempts one daily summary after the configured NSE session close (normally 15:30 IST, with special-session times read from the market calendar). The report includes daily signal counts by direction and engine, candidate statuses, recent signals, top rejection counts and data/scan diagnostics. It is sent by the running service's polling loop; if the Render service sleeps or is unavailable at close, delivery may be delayed or missed. Signal/candidate history and the duplicate-send guard are currently in memory, so a restart can reset summary counts or allow a duplicate summary. Use durable storage and an always-on instance if reliable historical reporting is required.
