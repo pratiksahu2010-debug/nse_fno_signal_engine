@@ -268,18 +268,22 @@ class SignalEngine:
             "stage_counts": dict(self.stage_counts),
         }
     async def run_loop(self):
+        # Recheck closed candles every 60 seconds. A five-minute-only schedule can
+        # miss a candle when the provider publishes it late, then wait another full
+        # interval before seeing it. Historical caching keeps this polling lighter.
         while True:
+            cycle_started = monotonic_time.monotonic()
             try:
                 if self.calendar.is_market_open():
                     await self.scan()
-                # Recalculate after scanning; using the pre-scan time delayed the next cycle
-                # by the scan duration (about a minute for 144 sequential REST requests).
-                now=now_ist()
-                seconds_into_bucket=(now.minute%5)*60+now.second+now.microsecond/1_000_000
-                delay=max(1.0,300.0-seconds_into_bucket)
-                await asyncio.sleep(delay)
-            except asyncio.CancelledError:raise
-            except Exception as exc:self.last_error=str(exc);log.exception("scan loop error");await asyncio.sleep(10)
+                elapsed = monotonic_time.monotonic() - cycle_started
+                await asyncio.sleep(max(5.0, 60.0 - elapsed))
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                self.last_error=str(exc)
+                log.exception("scan loop error")
+                await asyncio.sleep(10)
     def status(self):
         return {
             "service": "nse-fno-signal-engine",
