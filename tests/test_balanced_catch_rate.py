@@ -82,6 +82,9 @@ def test_balanced_profile_does_not_hard_reject_a_valid_long_pullback_below_vwap(
     strict = score_core(frame, min_score=65, option_available=True, profile="strict")
     assert "below_vwap" not in balanced.rejects
     assert "below_vwap" in strict.rejects
+    # Rejected diagnostics retain direction without exposing a tradable signal.
+    assert strict.direction is None
+    assert strict.metrics["proposed_direction"] == "LONG"
 
 
 def test_candidate_lifecycle_advances_once_per_unique_closed_candle():
@@ -135,3 +138,17 @@ def test_completed_15m_bars_excludes_still_forming_bucket():
     result = completed_15m_bars(frame, start + timedelta(minutes=17))
     assert result["ts"].tolist() == [start]
 
+
+def test_rejected_forward_outcome_labels_target_and_mfe_mae_without_trade_creation():
+    from replay.backtest import _rejected_forward_outcome
+
+    start = datetime(2026, 10, 24, 9, 15, tzinfo=timezone.utc)
+    frame = pd.DataFrame([
+        {"ts": start, "open": 100.0, "high": 100.5, "low": 99.5, "close": 100.0},
+        {"ts": start + timedelta(minutes=5), "open": 100.0, "high": 103.0, "low": 99.8, "close": 102.0},
+    ])
+    result = _rejected_forward_outcome(frame, 0, "LONG", 1.0, 3)
+    assert result is not None
+    assert result["outcome"] == "target"
+    assert result["mfe_r"] >= 1.5
+    assert result["mae_r"] <= 0
