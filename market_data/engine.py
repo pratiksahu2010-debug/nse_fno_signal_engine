@@ -197,6 +197,18 @@ class SignalEngine:
         else:
             result=score_explosion(d,self.settings.explosion_min_score,profile=getattr(self.settings, "filter_profile", "strict"))
             self.stage_counts["explosion_scoring_reached"]=self.stage_counts.get("explosion_scoring_reached",0)+1
+            if result.direction:
+                try:
+                    self.data_requests += 1
+                    option_rows = await self.rest.option_chain(key, "current_week")
+                except Exception as exc:
+                    log.info("option chain unavailable for EXPLOSION %s: %s", symbol, exc)
+        if option_rows:
+            chain_row = option_rows[0] or {}
+            if chain_row.get("pcr") is not None:
+                result.metrics["pcr"] = chain_row.get("pcr")
+            if chain_row.get("underlying_spot_price") is not None:
+                result.metrics["spot"] = chain_row.get("underlying_spot_price")
         diag["score"] = result.score
         diag["score_reasons"] = list(result.reasons)
         diag["score_metrics"] = result.metrics
@@ -248,7 +260,8 @@ class SignalEngine:
         option = option or {}
         ist_tz = now_ist().tzinfo
         ist_time = c.signal_time.astimezone(ist_tz) if c.signal_time.tzinfo else c.signal_time.replace(tzinfo=ist_tz)
-        utc_time = c.signal_time.astimezone(timezone.utc)
+        signal_close_time = ist_time + timedelta(minutes=5)
+        utc_time = signal_close_time.astimezone(timezone.utc)
         direction_icon = "🟩" if c.direction == "LONG" else "🟥"
         direction_label = "BUY CALL (CE) — LONG / BULLISH SIGNAL" if c.direction == "LONG" else "BUY PUT (PE) — SHORT / BEARISH SIGNAL"
         entry = c.entry_high if c.direction == "LONG" else c.entry_low
@@ -288,8 +301,8 @@ class SignalEngine:
         theta = option.get("theta")
         vega = option.get("vega")
         iv = option.get("iv")
-        entry_valid_until = ist_time + timedelta(minutes=5)
-        planned_exit = ist_time + timedelta(minutes=5 * max(1, int(getattr(c, "ttl_bars", 12))))
+        entry_valid_until = signal_close_time + timedelta(minutes=5)
+        planned_exit = signal_close_time + timedelta(minutes=5 * max(1, int(getattr(c, "ttl_bars", 12))))
         support = m.get("support", m.get("donchian_low20"))
         resistance = m.get("resistance", m.get("donchian_high20"))
         spot = m.get("spot", m.get("underlying_spot", c.signal_close))
@@ -300,7 +313,7 @@ class SignalEngine:
             f"{direction_icon} <b>{direction_label}</b>\n"
             f"<b>{c.symbol}</b> | NSE F&amp;O | <b>CONFIRMED TECHNICAL SETUP</b>\n\n"
             f"🕒 <b>SIGNAL DETAILS — 1. TIMING</b>\n"
-            f"• Signal time: <b>{ist_time.strftime('%d %b %Y, %H:%M:%S IST')}</b>\n"
+            f"• Signal candle close: <b>{signal_close_time.strftime('%d %b %Y, %H:%M:%S IST')}</b>\n"
             f"• Entry validity: <b>until {entry_valid_until.strftime('%H:%M IST')} — next 5-minute candle only</b>\n"
             f"• Planned time exit: <b>{planned_exit.strftime('%H:%M IST')}</b> (time-based estimate; exit rules still apply)\n"
             f"• UTC reference: {utc_time.strftime('%Y-%m-%d %H:%M UTC')}\n\n"
