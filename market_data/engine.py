@@ -6,7 +6,7 @@ from datetime import datetime, timezone, time
 from engines.indicators import add_indicators
 from engines.scoring import score_core,score_explosion
 from engines.candidates import make_candidate,on_closed_candle
-from engines.option_chain import assess_chain
+from engines.option_chain import assess_chain, select_option_plan
 from utils.time_utils import now_ist
 log=logging.getLogger(__name__)
 def completed_15m_bars(frame: pd.DataFrame, now: datetime) -> pd.DataFrame:
@@ -149,6 +149,7 @@ class SignalEngine:
             return None
         context_adjustment=0
         context_label="15m_context_neutral"
+        option_rows=[]
         if engine=="CORE":
             # A completed 15m aggregate is valid only when all three expected
             # completed 5m constituents exist. Missing bars must not masquerade
@@ -189,7 +190,7 @@ class SignalEngine:
                 underlying=key
                 try:
                     self.data_requests += 1
-                    chain=await self.rest.option_chain(underlying,"current_week"); oc=assess_chain(chain,prelim.direction);oc_adj=oc.adjustment;oc_avail=oc.available
+                    chain=await self.rest.option_chain(underlying,"current_week"); option_rows=chain; oc=assess_chain(chain,prelim.direction);oc_adj=oc.adjustment;oc_avail=oc.available
                 except Exception as exc:log.info("option chain unavailable %s: %s",symbol,exc)
             result=score_core(d,self.settings.min_score,oc_adj,oc_avail,profile=getattr(self.settings, "filter_profile", "strict"),context_adjustment=context_adjustment,context_label=context_label)
             self.stage_counts["core_scoring_reached"]=self.stage_counts.get("core_scoring_reached",0)+1
@@ -236,7 +237,7 @@ class SignalEngine:
         self.stage_counts["signal_created"]=self.stage_counts.get("signal_created",0)+1
         self.last_signal_time[(symbol, engine)] = bar
         self.last_signal_bar[k]=str(bar);self.signals.append({"symbol":symbol,"engine":engine,"score":result.score,"direction":result.direction,"setup":result.setup,"time":str(bar),"metrics":result.metrics,"score_reasons":result.reasons,"score_components":result.metrics.get("score_components",{}),"hard_gates":result.metrics.get("hard_gates",{}),"rejects":result.rejects})
-        await self.telegram.send(self.format_signal(candidate, result), parse_mode="HTML")
+        option_plan = select_option_plan(option_rows, result.direction, getattr(self.resolver, "rows", []), entry=(candidate.entry_high if candidate.direction == "LONG" else candidate.entry_low), stop=candidate.stop, target1=candidate.t1, target2=candidate.t2) if option_rows else {}\n        await self.telegram.send(self.format_signal(candidate, result, option_plan), parse_mode="HTML")
         return result
     @staticmethod
     def format_signal(c, r, option=None):
