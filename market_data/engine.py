@@ -31,6 +31,30 @@ def completed_15m_bars(frame: pd.DataFrame, now: datetime) -> pd.DataFrame:
     return aggregated[aggregated.ts.isin(complete_buckets)].reset_index(drop=True)
 
 
+def nearest_future_instrument(rows: list[dict], underlying_key: str, now: datetime) -> dict | None:
+    """Choose the nearest non-expired NSE futures contract for an exact underlying key."""
+    candidates = []
+    for row in rows or []:
+        if str(row.get("underlying_key") or "") != underlying_key:
+            continue
+        if str(row.get("segment") or row.get("exchange") or "").upper() not in {"NSE_FO", "NSE"}:
+            continue
+        kind = str(row.get("instrument_type") or "").upper()
+        if kind not in {"FUTSTK", "FUTIDX", "FUT"}:
+            continue
+        expiry = row.get("expiry")
+        try:
+            expiry_date = datetime.strptime(str(expiry), "%Y-%m-%d").date()
+        except (TypeError, ValueError):
+            continue
+        if expiry_date < now.date():
+            continue
+        key = row.get("instrument_key") or row.get("instrumentKey")
+        if key:
+            candidates.append((expiry_date, str(key), row))
+    return min(candidates, key=lambda item: (item[0], item[1]))[2] if candidates else None
+
+
 class SignalEngine:
     def __init__(self,settings,rest,resolver,telegram,calendar):
         self.settings=settings;self.rest=rest;self.resolver=resolver;self.telegram=telegram;self.calendar=calendar
@@ -209,6 +233,17 @@ class SignalEngine:
                 result.metrics["pcr"] = chain_row.get("pcr")
             if chain_row.get("underlying_spot_price") is not None:
                 result.metrics["spot"] = chain_row.get("underlying_spot_price")
+        future_row = nearest_future_instrument(getattr(self.resolver, "rows", []), key, now)
+        if result.direction and future_row:
+            future_key = future_row.get("instrument_key") or future_row.get("instrumentKey")
+            try:
+                self.data_requests += 1
+                future_ltp = await self.rest.ltp_quote(str(future_key))
+                if future_ltp is not None:
+                    result.metrics["futures_price"] = future_ltp
+                    result.metrics["futures_symbol"] = future_row.get("trading_symbol") or future_row.get("tradingsymbol") or str(future_key)
+            except Exception as exc:
+                log.info("futures quote unavailable for %s: %s", symbol, exc)
         diag["score"] = result.score
         diag["score_reasons"] = list(result.reasons)
         diag["score_metrics"] = result.metrics
