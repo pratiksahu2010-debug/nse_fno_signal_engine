@@ -2,7 +2,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from engines.scoring import Score
-from market_data.engine import SignalEngine
+from market_data.engine import SignalEngine, nearest_future_instrument
 from engines.candidates import Candidate
 from engines.option_chain import select_option_plan
 
@@ -160,3 +160,15 @@ def test_option_plan_rejects_wide_spread_and_insufficient_volume():
         },
     }
     assert select_option_plan([wide], "LONG", masters, 1450, 1440, 1465, 1480) == {}
+
+
+
+def test_nearest_future_uses_earliest_non_expired_matching_underlying():
+    now = datetime(2026, 10, 24, 10, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
+    rows = [
+        {"instrument_key": "NSE_FO|old", "underlying_key": "NSE_EQ|123", "segment": "NSE_FO", "instrument_type": "FUTSTK", "expiry": "2026-10-01"},
+        {"instrument_key": "NSE_FO|wrong", "underlying_key": "NSE_EQ|999", "segment": "NSE_FO", "instrument_type": "FUTSTK", "expiry": "2026-10-29"},
+        {"instrument_key": "NSE_FO|far", "underlying_key": "NSE_EQ|123", "segment": "NSE_FO", "instrument_type": "FUTSTK", "expiry": "2026-11-26"},
+        {"instrument_key": "NSE_FO|near", "underlying_key": "NSE_EQ|123", "segment": "NSE_FO", "instrument_type": "FUTSTK", "expiry": "2026-10-29"},
+    ]
+    assert nearest_future_instrument(rows, "NSE_EQ|123", now)["instrument_key"] == "NSE_FO|near"
