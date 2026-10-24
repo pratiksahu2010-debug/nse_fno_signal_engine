@@ -66,6 +66,10 @@ def test_format_signal_contains_trade_plan_and_indicators():
     assert "EMA 9 / EMA 21" in message
     assert "WHY THIS SIGNAL?" in message
     assert "no order is placed automatically" in message
+    # Candidate timestamps are candle starts; alerts and validity use candle-close time.
+    assert "Signal candle close: <b>23 Oct 2026, 14:25:00 IST</b>" in message
+    assert "until 14:30 IST" in message
+    assert "15:25 IST" in message
 
 
 
@@ -133,3 +137,26 @@ def test_option_plan_returns_empty_when_chain_quote_is_not_tradeable():
     }]
     masters = [{"instrument_key": "NSE_FO|123", "lot_size": 250}]
     assert select_option_plan(rows, "LONG", masters, 1450, 1440, 1465, 1480) == {}
+
+
+
+def test_option_plan_rejects_wide_spread_and_insufficient_volume():
+    base = {
+        "expiry": "2026-10-29",
+        "strike_price": 1450,
+        "call_options": {
+            "instrument_key": "NSE_FO|123",
+            "market_data": {"ltp": 20.0, "bid_price": 19.0, "ask_price": 19.8, "oi": 120000, "volume": 24999},
+            "option_greeks": {"delta": 0.52},
+        },
+    }
+    masters = [{"instrument_key": "NSE_FO|123", "trading_symbol": "RELIANCE26OCT1450CE", "lot_size": 250}]
+    assert select_option_plan([base], "LONG", masters, 1450, 1440, 1465, 1480) == {}
+    wide = {
+        **base,
+        "call_options": {
+            **base["call_options"],
+            "market_data": {"ltp": 20.0, "bid_price": 19.0, "ask_price": 19.8, "oi": 120000, "volume": 25000},
+        },
+    }
+    assert select_option_plan([wide], "LONG", masters, 1450, 1440, 1465, 1480) == {}
