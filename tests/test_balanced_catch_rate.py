@@ -152,3 +152,30 @@ def test_rejected_forward_outcome_labels_target_and_mfe_mae_without_trade_creati
     assert result["outcome"] == "target"
     assert result["mfe_r"] >= 1.5
     assert result["mae_r"] <= 0
+
+def test_compare_profiles_uses_same_data_and_cost_assumptions(monkeypatch):
+    from replay import backtest
+
+    calls = []
+
+    def fake_replay(path, min_score, *, profile, cost_bps_per_side,
+                    slippage_bps_per_side, max_hold_bars):
+        calls.append((path, min_score, profile, cost_bps_per_side,
+                      slippage_bps_per_side, max_hold_bars))
+        return {
+            "trades": 3, "win_rate_pct": 50.0, "expectancy_net_r": 0.2,
+            "expectancy_gross_r": 0.3, "profit_factor_net": 1.2,
+            "max_drawdown_net_r": 1.0, "rejected_setup_count": 4,
+            "rejection_reason_counts": {}, "rejected_forward_outcomes": {},
+        }
+
+    monkeypatch.setattr(backtest, "replay", fake_replay)
+    result = backtest.compare_profiles(
+        "sample.csv", 70, cost_bps_per_side=8,
+        slippage_bps_per_side=3, max_hold_bars=10,
+    )
+    assert [call[2] for call in calls] == ["strict", "balanced"]
+    assert all(call[0] == "sample.csv" and call[1] == 70 for call in calls)
+    assert all(call[3:] == (8, 3, 10) for call in calls)
+    assert set(result["profiles"]) == {"strict", "balanced"}
+    assert "not proof of future performance" in result["comparison_warning"]
