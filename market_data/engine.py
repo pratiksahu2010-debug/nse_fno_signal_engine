@@ -9,6 +9,28 @@ from engines.candidates import make_candidate,on_closed_candle
 from engines.option_chain import assess_chain
 from utils.time_utils import now_ist
 log=logging.getLogger(__name__)
+def completed_15m_bars(frame: pd.DataFrame, now: datetime) -> pd.DataFrame:
+    """Aggregate only fully closed 15-minute buckets with all 3 expected 5m bars.
+
+    Frame must contain a timezone-aware ts column and OHLCV columns.
+    Missing constituent bars and the still-forming bucket are excluded.
+    """
+    if frame.empty or "ts" not in frame.columns:
+        return pd.DataFrame(columns=["ts", "open", "high", "low", "close", "volume"])
+    indexed = frame.set_index("ts").sort_index()
+    resampler = indexed.resample("15min", label="left", closed="left")
+    aggregated = resampler.agg({"open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"}).dropna().reset_index()
+    cutoff = pd.Timestamp(now) - pd.Timedelta(seconds=2)
+    complete_buckets = []
+    for bucket, group in resampler:
+        if len(group) != 3:
+            continue
+        expected = [bucket, bucket + pd.Timedelta(minutes=5), bucket + pd.Timedelta(minutes=10)]
+        if list(group.index) == expected and bucket + pd.Timedelta(minutes=15) <= cutoff:
+            complete_buckets.append(bucket)
+    return aggregated[aggregated.ts.isin(complete_buckets)].reset_index(drop=True)
+
+
 class SignalEngine:
     def __init__(self,settings,rest,resolver,telegram,calendar):
         self.settings=settings;self.rest=rest;self.resolver=resolver;self.telegram=telegram;self.calendar=calendar
@@ -131,17 +153,7 @@ class SignalEngine:
             # A completed 15m aggregate is valid only when all three expected
             # completed 5m constituents exist. Missing bars must not masquerade
             # as a complete higher-timeframe candle.
-            indexed=d.set_index("ts").sort_index()
-            resampler=indexed.resample("15min",label="left",closed="left")
-            d15=resampler.agg({"open":"first","high":"max","low":"min","close":"last","volume":"sum"}).dropna().reset_index()
-            complete_buckets=[]
-            for bucket, group in resampler:
-                if len(group) != 3:
-                    continue
-                expected=[bucket, bucket+pd.Timedelta(minutes=5), bucket+pd.Timedelta(minutes=10)]
-                if list(group.index) == expected and bucket+pd.Timedelta(minutes=15) <= pd.Timestamp(now - __import__("datetime").timedelta(seconds=2)):
-                    complete_buckets.append(bucket)
-            d15=d15[d15.ts.isin(complete_buckets)].reset_index(drop=True)
+            d15 = completed_15m_bars(d, now)
             if len(d15) < 22:
                 diag["stage"]="15m_confirmation_missing";diag["reason"]="15m_confirmation_missing_or_incomplete"
                 self.stage_counts["15m_confirmation_missing"]=self.stage_counts.get("15m_confirmation_missing",0)+1
