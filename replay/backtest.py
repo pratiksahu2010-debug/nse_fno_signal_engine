@@ -26,7 +26,7 @@ def _rejected_forward_outcome(data, signal_index, direction, atr, max_hold_bars)
         return None
     risk = 1.5 * float(atr)
     stop = entry - risk if direction == "LONG" else entry + risk
-    target = entry + risk if direction == "LONG" else entry - risk
+    target = entry + 1.5 * risk if direction == "LONG" else entry - 1.5 * risk
     end = min(entry_index + max_hold_bars, len(data))
     mfe = mae = 0.0
     outcome = "neither"
