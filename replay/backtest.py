@@ -16,6 +16,50 @@ from engines.indicators import add_indicators
 from engines.scoring import score_core
 
 
+def _rejected_forward_outcome(data, signal_index, direction, atr, max_hold_bars):
+    """Counterfactual label for a rejected setup; never used to create a trade."""
+    entry_index = signal_index + 1
+    if entry_index >= len(data) or not pd.notna(atr) or atr <= 0:
+        return None
+    entry = float(data.iloc[entry_index].open)
+    if not pd.notna(entry) or entry <= 0:
+        return None
+    risk = 1.5 * float(atr)
+    stop = entry - risk if direction == "LONG" else entry + risk
+    target = entry + risk if direction == "LONG" else entry - risk
+    end = min(entry_index + max_hold_bars, len(data))
+    mfe = mae = 0.0
+    outcome = "neither"
+    exit_index = end - 1
+    for j in range(entry_index, end):
+        bar = data.iloc[j]
+        high, low = float(bar.high), float(bar.low)
+        if direction == "LONG":
+            mfe = max(mfe, (high - entry) / risk)
+            mae = min(mae, (low - entry) / risk)
+            stop_hit, target_hit = low <= stop, high >= target
+        else:
+            mfe = max(mfe, (entry - low) / risk)
+            mae = min(mae, (entry - high) / risk)
+            stop_hit, target_hit = high >= stop, low <= target
+        if stop_hit:  # conservative tie-break if both levels trade in one bar
+            outcome, exit_index = "stop", j
+            break
+        if target_hit:
+            outcome, exit_index = "target", j
+            break
+    return {
+        "entry_time": str(data.iloc[entry_index].ts),
+        "entry": entry,
+        "stop": stop,
+        "target_1_5R": target,
+        "outcome": outcome,
+        "mfe_r": round(mfe, 3),
+        "mae_r": round(mae, 3),
+        "bars_observed": exit_index - entry_index + 1,
+    }
+
+
 def replay(path, min_score=75, *, profile="strict", cost_bps_per_side=0.0,
            slippage_bps_per_side=0.0, max_hold_bars=12):
     if cost_bps_per_side < 0 or slippage_bps_per_side < 0:
@@ -25,6 +69,8 @@ def replay(path, min_score=75, *, profile="strict", cost_bps_per_side=0.0,
     d = pd.read_csv(path, parse_dates=["ts"])
     d = add_indicators(d)
     trades = []
+    rejected_candidates = []
+    rejection_counts = {}
     next_eligible_index = 35
     last_signal_index = None
     per_side_bps = float(cost_bps_per_side) + float(slippage_bps_per_side)
@@ -36,9 +82,27 @@ def replay(path, min_score=75, *, profile="strict", cost_bps_per_side=0.0,
             continue
         hist = d.iloc[:i + 1]  # Strategy cannot see future rows.
         result = score_core(hist, min_score, 0, False, profile=profile)
-        if not result.direction:
-            continue
         row = hist.iloc[-1]
+        if not result.direction:
+            # Record only rejected setups with a defined technical direction and
+            # setup trigger. This is counterfactual research, not a live signal.
+            for reason in result.rejects:
+                rejection_counts[reason] = rejection_counts.get(reason, 0) + 1
+            proposed_direction = (result.metrics or {}).get("proposed_direction")
+            if proposed_direction in {"LONG", "SHORT"} and result.setup:
+                outcome = _rejected_forward_outcome(
+                    d, i, proposed_direction, row.get("atr14"), max_hold_bars
+                )
+                if outcome is not None:
+                    rejected_candidates.append({
+                        "signal_time": str(row.ts),
+                        "direction": proposed_direction,
+                        "setup": result.setup,
+                        "score": result.score,
+                        "rejects": list(result.rejects),
+                        **outcome,
+                    })
+            continue
         entry_i = i + 1
         entry = float(d.iloc[entry_i].open)
         atr = float(row.atr14)
@@ -104,11 +168,22 @@ def replay(path, min_score=75, *, profile="strict", cost_bps_per_side=0.0,
         "expectancy_gross_r": sum(gross_rs) / len(gross_rs) if gross_rs else 0,
         "profit_factor_net": gross_profit / gross_loss if gross_loss else None,
         "max_drawdown_net_r": drawdown,
+        "rejected_setup_count": len(rejected_candidates),
+        "rejection_reason_counts": dict(sorted(rejection_counts.items(), key=lambda item: (-item[1], item[0]))),
+        "rejected_forward_outcomes": {
+            "target_before_stop": sum(x["outcome"] == "target" for x in rejected_candidates),
+            "stop_before_target": sum(x["outcome"] == "stop" for x in rejected_candidates),
+            "neither_within_horizon": sum(x["outcome"] == "neither" for x in rejected_candidates),
+            "avg_mfe_r": round(sum(x["mfe_r"] for x in rejected_candidates) / len(rejected_candidates), 3) if rejected_candidates else 0,
+            "avg_mae_r": round(sum(x["mae_r"] for x in rejected_candidates) / len(rejected_candidates), 3) if rejected_candidates else 0,
+            "note": "Counterfactual rejected setups overlap accepted trades and each other; these counts are diagnostic and must not be added to trade performance.",
+        },
         "cost_bps_per_side": cost_bps_per_side,
         "slippage_bps_per_side": slippage_bps_per_side,
         "cost_model_warning": "Basis-point approximation only; configure charges for your broker/instrument. Not option-premium P&L.",
         "warning": "Research replay only; not evidence of profitability or live execution quality.",
         "trades_detail": trades,
+        "rejected_candidates_detail": rejected_candidates,
     }
 
 
