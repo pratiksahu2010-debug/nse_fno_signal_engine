@@ -1,4 +1,4 @@
-from datetime import datetime,timezone
+from datetime import datetime,timedelta,timezone
 from types import SimpleNamespace
 from engines.candidates import make_candidate,on_closed_candle
 from engines.option_chain import assess_chain,option_liquidity_ok
@@ -14,7 +14,7 @@ def test_candidate_levels_and_entry_lifecycle():
     c=SimpleNamespace(ts=datetime.now(timezone.utc),close=100,high=101,low=99)
     x=make_candidate("ABC","LONG","CORE","A1",80,c,2)
     assert x.stop<100 and x.t1>100 and x.t2>x.t1
-    nextbar=SimpleNamespace(close=100.1,high=100.4,low=99.9)
+    nextbar=SimpleNamespace(ts=c.ts+timedelta(minutes=5),close=100.1,high=100.4,low=99.9)
     result=on_closed_candle(x,nextbar);assert result=="ENTERED" and x.status=="ACTIVE"
 
 def test_option_liquidity_rejects_wide_spread():
