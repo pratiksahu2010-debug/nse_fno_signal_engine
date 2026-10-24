@@ -239,59 +239,102 @@ class SignalEngine:
         await self.telegram.send(self.format_signal(candidate, result), parse_mode="HTML")
         return result
     @staticmethod
-    def format_signal(c, r):
-        """Telegram alert with a consistent, human-readable F&O signal breakdown."""
-        from datetime import timezone
+    def format_signal(c, r, option=None):
+        """Readable F&O alert. Missing option-market data is explicitly marked unavailable."""
+        from datetime import timezone, timedelta
         m = r.metrics or {}
-        ist_time = c.signal_time.astimezone(now_ist().tzinfo) if c.signal_time.tzinfo else c.signal_time.replace(tzinfo=now_ist().tzinfo)
+        option = option or {}
+        ist_tz = now_ist().tzinfo
+        ist_time = c.signal_time.astimezone(ist_tz) if c.signal_time.tzinfo else c.signal_time.replace(tzinfo=ist_tz)
         utc_time = c.signal_time.astimezone(timezone.utc)
-        direction_icon = "🟢" if c.direction == "LONG" else "🔴"
-        direction_label = "LONG / BULLISH" if c.direction == "LONG" else "SHORT / BEARISH"
+        direction_icon = "🟩" if c.direction == "LONG" else "🟥"
+        direction_label = "BUY CALL (CE)" if c.direction == "LONG" else "BUY PUT (PE)"
         entry = c.entry_high if c.direction == "LONG" else c.entry_low
         risk = abs(entry - c.stop)
         rr1 = abs(c.t1 - entry) / risk if risk else 0.0
         rr2 = abs(c.t2 - entry) / risk if risk else 0.0
-        def val(key, digits=2):
-            value = m.get(key)
+        expiry = option.get("expiry", "N/A — option contract not resolved")
+        contract = option.get("trading_symbol") or option.get("instrument_key") or "N/A — option contract not resolved"
+        lot_size = option.get("lot_size")
+        premium = option.get("ask") or option.get("ltp")
+        premium_sl = option.get("premium_stop")
+        premium_t1 = option.get("premium_t1")
+        premium_t2 = option.get("premium_t2")
+        premium_risk = option.get("risk_per_lot")
+        premium_rr1 = option.get("premium_rr1")
+        premium_rr2 = option.get("premium_rr2")
+        def fmt(value, digits=2):
             try:
-                return f"{float(value):.{digits}f}" if value is not None else "N/A"
+                return f"{float(value):,.{digits}f}" if value is not None else "N/A"
+            except (TypeError, ValueError):
+                return "N/A"
+        def val(key, digits=2):
+            return fmt(m.get(key), digits)
+        def signed(value):
+            try:
+                return f"{float(value):+.2f}" if value is not None else "N/A"
             except (TypeError, ValueError):
                 return "N/A"
         volume_ratio = val("rvol", 2)
         reasons = [reason for reason in (r.reasons or []) if not reason.endswith(tuple(f":+{n}" for n in range(1, 101)))]
-        reasons_text = "\n".join(f"  🟢 {reason.replace('_', ' ')}" for reason in (reasons[:5] or ["Technical gates passed"]))
+        reasons_text = "\\n".join(f"  • {reason.replace('_', ' ')}" for reason in (reasons[:5] or ["Technical gates passed"]))
         rejects_text = ", ".join(r.rejects or []) or "None recorded"
+        spread_pct = option.get("spread_pct")
+        spread_text = f"{float(spread_pct):.2f}%" if spread_pct is not None else "N/A"
+        delta = option.get("delta")
+        gamma = option.get("gamma")
+        theta = option.get("theta")
+        vega = option.get("vega")
+        iv = option.get("iv")
+        entry_valid_until = ist_time + timedelta(minutes=5)
+        planned_exit = ist_time + timedelta(minutes=5 * max(1, int(getattr(c, "ttl_bars", 12))))
+        support = m.get("support", m.get("donchian_low20"))
+        resistance = m.get("resistance", m.get("donchian_high20"))
+        spot = m.get("spot", m.get("underlying_spot", c.signal_close))
+        futures = m.get("futures_price")
+        confidence_basis = "score is a rule-based quality score, not a calibrated probability"
+        option_cost = option.get("estimated_cost_per_lot")
         return (
-            f"{direction_icon} <b>{direction_label} SIGNAL</b> {'⬆️' if c.direction == 'LONG' else '⬇️'}\n"
-            f"<b>{c.symbol}</b> | NSE F&O underlying | <b>CONFIRMED</b>\n\n"
-            f"🕒 <b>SIGNAL DETAILS</b>\n"
-            f"• Signal candle: <b>{ist_time.strftime('%d %b %Y, %H:%M IST')}</b>\n"
-            f"• UTC: <b>{utc_time.strftime('%Y-%m-%d %H:%M UTC')}</b>\n"
-            f"• Engine: <b>{c.engine}</b> | Setup: <b>{c.setup}</b> | Score: <b>{c.score}/100</b>\n\n"
-            f"🎯 <b>TRADE PLAN (UNDERLYING REFERENCE LEVELS)</b>\n"
-            f"• Signal close: <b>{c.signal_close:.2f}</b>\n"
-            f"• Entry zone (next 5-minute candle only): <b>{c.entry_low:.2f} – {c.entry_high:.2f}</b>\n"
-            f"• Stop-loss (SL): <b>{c.stop:.2f}</b>\n"
-            f"• Target 1 (TP1): <b>{c.t1:.2f}</b>\n"
-            f"• Target 2 (TP2): <b>{c.t2:.2f}</b>\n"
-            f"• Reward:risk: <b>{rr1:.2f}R / {rr2:.2f}R</b>\n"
-            f"• Entry window: <b>next 5-minute candle only</b>\n\n"
-            f"📊 <b>TECHNICAL INDICATORS</b>\n"
-            f"• EMA 9 / EMA 21: <b>{val('ema9')} / {val('ema21')}</b>\n"
-            f"• RSI (14): <b>{val('rsi14')}</b> | ADX (14): <b>{val('adx14')}</b>\n"
-            f"• VWAP: <b>{val('vwap')}</b> | ATR (14): <b>{val('atr14', 4)}</b>\n"
-            f"• RVOL: <b>{volume_ratio}x</b> | +DI / −DI: <b>{val('plus_di')} / {val('minus_di')}</b>\n"
-            f"• EMA9 extension: <b>{val('ema9_extension_atr', 2)} ATR</b>\n"
-            f"• Candle range: <b>{(c.signal_high - c.signal_low):.2f}</b>\n"
-            f"• Body / candle range: <b>{float(m.get('body_ratio') or 0) * 100:.0f}%</b> | Close location: <b>{(float(m.get('clv') or 0) + 1) * 50:.0f}%</b>\n\n"
-            f"🧠 <b>WHY THIS SIGNAL?</b>\n{reasons_text}\n\n"
-            f"⚠️ <b>WARNINGS / CONDITIONS</b>\n"
-            f"• Rejection gates: <b>{rejects_text}</b>\n"
-            f"• Invalidation: stop-loss level <b>{c.stop:.2f}</b>\n\n"
-            f"🔒 <b>Signal only — no order is placed automatically.</b>\n"
-            f"Underlying levels are not option-premium prices or guaranteed fills. Check option strike, liquidity, spread, expiry and risk before acting."
+            f"{direction_icon} <b>{direction_label}</b>\\n"
+            f"<b>{c.symbol}</b> | NSE F&amp;O | <b>CONFIRMED TECHNICAL SETUP</b>\\n\\n"
+            f"🕒 <b>1. TIMING</b>\\n"
+            f"• Signal time: <b>{ist_time.strftime('%d %b %Y, %H:%M:%S IST')}</b>\\n"
+            f"• Entry validity: <b>until {entry_valid_until.strftime('%H:%M IST')} — next 5-minute candle only</b>\\n"
+            f"• Planned time exit: <b>{planned_exit.strftime('%H:%M IST')}</b> (time-based estimate; exit rules still apply)\\n"
+            f"• UTC reference: {utc_time.strftime('%Y-%m-%d %H:%M UTC')}\\n\\n"
+            f"🎯 <b>2. OPTION CONTRACT</b>\\n"
+            f"• Contract: <b>{contract}</b>\\n"
+            f"• Expiry: <b>{expiry}</b> | Strike: <b>{fmt(option.get('strike'))}</b> | Type: <b>{'CE' if c.direction == 'LONG' else 'PE'}</b>\\n"
+            f"• Lot size: <b>{fmt(lot_size, 0)}</b> | Estimated cost/lot: <b>{'₹' + fmt(option_cost) if option_cost is not None else 'N/A'}</b>\\n"
+            f"• Premium reference (ask preferred): <b>{'₹' + fmt(premium) if premium is not None else 'N/A'}</b>\\n\\n"
+            f"💹 <b>3. OPTION PREMIUM TRADE PLAN (ESTIMATES)</b>\\n"
+            f"• Premium entry zone: <b>{'₹' + fmt(option.get('premium_entry_low')) + ' – ₹' + fmt(option.get('premium_entry_high')) if option.get('premium_entry_low') is not None and option.get('premium_entry_high') is not None else 'N/A — live option quote not resolved'}</b>\\n"
+            f"• Premium stop-loss: <b>{'₹' + fmt(premium_sl) if premium_sl is not None else 'N/A'}</b>\\n"
+            f"• Target 1 / Target 2: <b>{'₹' + fmt(premium_t1) if premium_t1 is not None else 'N/A'} / {'₹' + fmt(premium_t2) if premium_t2 is not None else 'N/A'}</b>\\n"
+            f"• Estimated risk per lot: <b>{'₹' + fmt(premium_risk) if premium_risk is not None else 'N/A'}</b>\\n"
+            f"• Premium reward:risk: <b>{fmt(premium_rr1)}R / {fmt(premium_rr2)}R</b>\\n"
+            f"• These premium levels must be calculated from the selected contract's quote/Greeks; they are not inferred from underlying prices.\\n\\n"
+            f"📍 <b>4. UNDERLYING LEVELS</b>\\n"
+            f"• Spot / signal close: <b>{fmt(spot)}</b> | Futures: <b>{fmt(futures)}</b>\\n"
+            f"• Underlying entry zone: <b>{fmt(c.entry_low)} – {fmt(c.entry_high)}</b>\\n"
+            f"• Underlying stop: <b>{fmt(c.stop)}</b> | Target 1: <b>{fmt(c.t1)}</b> | Target 2: <b>{fmt(c.t2)}</b>\\n"
+            f"• Support / resistance reference: <b>{fmt(support)} / {fmt(resistance)}</b>\\n"
+            f"• Underlying reward:risk: <b>{rr1:.2f}R / {rr2:.2f}R</b>\\n\\n"
+            f"📈 <b>5. SIGNAL QUALITY &amp; LIQUIDITY</b>\\n"
+            f"• Quality score: <b>{c.score}/100</b> ({confidence_basis})\\n"
+            f"• Setup: <b>{c.setup}</b> | Engine: <b>{c.engine}</b> | HTF context: <b>{m.get('context_label', 'N/A')}</b>\\n"
+            f"• Agreeing evidence: <b>{', '.join(reasons[:4]) if reasons else 'Technical gates passed'}</b>\\n"
+            f"• Greeks Δ / Γ / Θ / Vega: <b>{fmt(delta, 3)} / {fmt(gamma, 4)} / {fmt(theta, 3)} / {fmt(vega, 3)}</b>\\n"
+            f"• IV: <b>{fmt(iv)}%</b> | Bid / ask: <b>₹{fmt(option.get('bid')} / ₹{fmt(option.get('ask')}</b> | Spread: <b>{spread_text}</b>\\n"
+            f"• OI: <b>{fmt(option.get('oi'), 0)}</b> | Option volume: <b>{fmt(option.get('volume'), 0)}</b> | PCR: <b>{fmt(m.get('pcr'), 2)}</b>\\n"
+            f"• EMA 9 / EMA 21: <b>{val('ema9')} / {val('ema21')}</b> | RSI: <b>{val('rsi14')}</b> | ADX: <b>{val('adx14')}</b>\\n"
+            f"• VWAP: <b>{val('vwap')}</b> | ATR: <b>{val('atr14', 4)}</b> | RVOL: <b>{volume_ratio}x</b>\\n"
+            f"• Warnings/rejections: <b>{rejects_text}</b>\\n\\n"
+            f"🧠 <b>6. WHY THIS SIGNAL?</b>\\n{reasons_text}\\n\\n"
+            f"🔒 <b>Signal only — no order is placed automatically.</b>\\n"
+            f"Missing contract/quote/Greeks are shown as N/A rather than fabricated. Do not trade an option until its exact contract, live bid/ask, lot size, and premium risk are verified."
         )
-    async def _scan_one(self,symbol,key,engine):
+        async def _scan_one(self,symbol,key,engine):
         """Isolate per-symbol failures so one malformed response cannot abort a full scan."""
         try:
             await self.scan_symbol(symbol,key,engine)
