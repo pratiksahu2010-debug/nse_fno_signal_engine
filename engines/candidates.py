@@ -7,7 +7,7 @@ from typing import Any
 class Candidate:
     symbol:str; direction:str; engine:str; setup:str; score:int; signal_time:datetime
     signal_close:float; signal_high:float; signal_low:float; atr:float; entry_low:float; entry_high:float
-    stop:float; t1:float; t2:float; ttl_bars:int=12; status:str="PENDING"; bars_seen:int=0
+    stop:float; t1:float; t2:float; ttl_bars:int=12; status:str="PENDING"; bars_seen:int=0; last_processed_candle:datetime|None=None
     entry_price:float|None=None; t1_hit:bool=False; t2_hit:bool=False; exit_price:float|None=None; exit_reason:str|None=None
     notes:list[str]=field(default_factory=list)
     def as_dict(self):return asdict(self)
@@ -42,7 +42,16 @@ def make_candidate(symbol, direction, engine, setup, score, candle, atr, ttl_bar
 
 def on_closed_candle(c:Candidate, candle:Any)->str|None:
     if c.status not in {"PENDING","ACTIVE"}:return None
-    c.bars_seen+=1; close=float(candle.close); low=float(candle.low); high=float(candle.high)
+    # Polling may revisit the same completed candle many times. Lifecycle state
+    # must advance at most once per unique candle timestamp.
+    candle_ts = getattr(candle, "ts", None)
+    if candle_ts is None or candle_ts <= c.signal_time:
+        return None
+    if c.last_processed_candle is not None and candle_ts <= c.last_processed_candle:
+        return None
+    c.last_processed_candle = candle_ts
+    c.bars_seen += 1
+    close=float(candle.close); low=float(candle.low); high=float(candle.high)
     if c.status=="PENDING":
         if c.bars_seen>1: c.status="EXPIRED"; c.exit_reason="entry_window_expired"; return c.status
         if c.direction=="LONG" and close<c.signal_close-0.35*c.atr: c.status="CANCELLED";c.exit_reason="gap_or_chase";return c.status
