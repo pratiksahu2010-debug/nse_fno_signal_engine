@@ -337,7 +337,7 @@ class SignalEngine:
             f"🔒 <b>Signal only — no order is placed automatically.</b>\n"
             f"Missing contract/quote/Greeks are shown as N/A rather than fabricated. Do not trade an option until its exact contract, live bid/ask, lot size, and premium risk are verified."
         )
-        async def _scan_one(self,symbol,key,engine):
+    async def _scan_one(self,symbol,key,engine):
         """Isolate per-symbol failures so one malformed response cannot abort a full scan."""
         try:
             await self.scan_symbol(symbol,key,engine)
