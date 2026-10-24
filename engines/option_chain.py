@@ -84,10 +84,12 @@ def select_option_plan(
             lot_size = int(master.get("lot_size") or opt.get("lot_size") or row.get("lot_size") or 0)
         except (TypeError, ValueError):
             continue
-        if not key or ltp <= 0 or bid <= 0 or ask < bid or ask <= 0 or oi <= 0 or volume <= 0 or lot_size <= 0:
+        if not key or ltp <= 0 or bid <= 0 or ask < bid or ask <= 0 or oi < 1000 or volume < lot_size * 100 or lot_size <= 0:
             continue
         spread_pct = ((ask - bid) / ltp) * 100.0
-        if spread_pct > 8.0 or not 0.30 <= delta <= 0.70:
+        underlying_key = str(master.get("underlying_key") or "")
+        max_spread_pct = 1.5 if underlying_key.startswith("NSE_INDEX|") else 3.0
+        if spread_pct > max_spread_pct or not 0.45 <= delta <= 0.60:
             continue
         # Prefer delta near 0.52 and tighter spreads; tie-break in favour of more OI.
         candidates.append((abs(delta - 0.52) + spread_pct / 100.0, -oi, row, opt, md, greeks, master, key, ltp, bid, ask, oi, volume, delta, strike, lot_size, spread_pct))
