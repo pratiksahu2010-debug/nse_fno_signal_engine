@@ -125,13 +125,25 @@ class SignalEngine:
             self.stage_counts["duplicate_bar"]=self.stage_counts.get("duplicate_bar",0)+1
             self.rejections["duplicate_bar"]=self.rejections.get("duplicate_bar",0)+1
             return None
+        context_adjustment=0
+        context_label="15m_context_neutral"
         if engine=="CORE":
-            # Require directionally aligned last CLOSED 15-minute bar; current partial 15m is excluded.
-            d15=d.set_index("ts").resample("15min",label="left",closed="left").agg({"open":"first","high":"max","low":"min","close":"last","volume":"sum"}).dropna().reset_index()
-            d15=d15[d15.ts + pd.Timedelta(minutes=15) <= pd.Timestamp(now - __import__("datetime").timedelta(seconds=2))]
-            # Strict profile fails closed when higher-timeframe confirmation is not ready.
+            # A completed 15m aggregate is valid only when all three expected
+            # completed 5m constituents exist. Missing bars must not masquerade
+            # as a complete higher-timeframe candle.
+            indexed=d.set_index("ts").sort_index()
+            resampler=indexed.resample("15min",label="left",closed="left")
+            d15=resampler.agg({"open":"first","high":"max","low":"min","close":"last","volume":"sum"}).dropna().reset_index()
+            complete_buckets=[]
+            for bucket, group in resampler:
+                if len(group) != 3:
+                    continue
+                expected=[bucket, bucket+pd.Timedelta(minutes=5), bucket+pd.Timedelta(minutes=10)]
+                if list(group.index) == expected and bucket+pd.Timedelta(minutes=15) <= pd.Timestamp(now - __import__("datetime").timedelta(seconds=2)):
+                    complete_buckets.append(bucket)
+            d15=d15[d15.ts.isin(complete_buckets)].reset_index(drop=True)
             if len(d15) < 22:
-                diag["stage"]="15m_confirmation_missing";diag["reason"]="15m_confirmation_missing"
+                diag["stage"]="15m_confirmation_missing";diag["reason"]="15m_confirmation_missing_or_incomplete"
                 self.stage_counts["15m_confirmation_missing"]=self.stage_counts.get("15m_confirmation_missing",0)+1
                 self.rejections["15m_confirmation_missing"] = self.rejections.get("15m_confirmation_missing", 0) + 1
                 return None
@@ -141,11 +153,23 @@ class SignalEngine:
             short_htf = confirm.close < confirm.ema21 and confirm.ema9 < confirm.ema21
             long_ltf = last.close > last.ema21 and last.ema9 > last.ema21
             short_ltf = last.close < last.ema21 and last.ema9 < last.ema21
-            if not ((long_ltf and long_htf) or (short_ltf and short_htf)):
+            aligned=(long_ltf and long_htf) or (short_ltf and short_htf)
+            opposing=(long_ltf and short_htf) or (short_ltf and long_htf)
+            filter_profile=getattr(self.settings, "filter_profile", "strict")
+            if filter_profile == "strict" and not aligned:
                 diag["stage"]="15m_confirmation_failed";diag["reason"]="15m_confirmation_failed"
                 self.stage_counts["15m_confirmation_failed"]=self.stage_counts.get("15m_confirmation_failed",0)+1
                 self.rejections["15m_confirmation_failed"] = self.rejections.get("15m_confirmation_failed", 0) + 1
                 return None
+            if filter_profile == "balanced":
+                if aligned:
+                    context_adjustment=5
+                    context_label="15m_aligned"
+                elif opposing:
+                    context_adjustment=-8
+                    context_label="15m_opposing"
+                else:
+                    context_label="15m_context_neutral"
             oc_adj=0;oc_avail=False
             # Option chain is queried only for technical candidates; data unavailable never fabricates an adjustment.
             prelim=score_core(d,60,0,True,profile=getattr(self.settings, "filter_profile", "strict"))
@@ -155,7 +179,7 @@ class SignalEngine:
                     self.data_requests += 1
                     chain=await self.rest.option_chain(underlying,"current_week"); oc=assess_chain(chain,prelim.direction);oc_adj=oc.adjustment;oc_avail=oc.available
                 except Exception as exc:log.info("option chain unavailable %s: %s",symbol,exc)
-            result=score_core(d,self.settings.min_score,oc_adj,oc_avail,profile=getattr(self.settings, "filter_profile", "strict"))
+            result=score_core(d,self.settings.min_score,oc_adj,oc_avail,profile=getattr(self.settings, "filter_profile", "strict"),context_adjustment=context_adjustment,context_label=context_label)
             self.stage_counts["core_scoring_reached"]=self.stage_counts.get("core_scoring_reached",0)+1
         else:
             result=score_explosion(d,self.settings.explosion_min_score,profile=getattr(self.settings, "filter_profile", "strict"))
