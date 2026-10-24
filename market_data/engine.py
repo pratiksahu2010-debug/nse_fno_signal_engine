@@ -237,7 +237,8 @@ class SignalEngine:
         self.stage_counts["signal_created"]=self.stage_counts.get("signal_created",0)+1
         self.last_signal_time[(symbol, engine)] = bar
         self.last_signal_bar[k]=str(bar);self.signals.append({"symbol":symbol,"engine":engine,"score":result.score,"direction":result.direction,"setup":result.setup,"time":str(bar),"metrics":result.metrics,"score_reasons":result.reasons,"score_components":result.metrics.get("score_components",{}),"hard_gates":result.metrics.get("hard_gates",{}),"rejects":result.rejects})
-        option_plan = select_option_plan(option_rows, result.direction, getattr(self.resolver, "rows", []), entry=(candidate.entry_high if candidate.direction == "LONG" else candidate.entry_low), stop=candidate.stop, target1=candidate.t1, target2=candidate.t2) if option_rows else {}\n        await self.telegram.send(self.format_signal(candidate, result, option_plan), parse_mode="HTML")
+        option_plan = select_option_plan(option_rows, result.direction, getattr(self.resolver, "rows", []), entry=(candidate.entry_high if candidate.direction == "LONG" else candidate.entry_low), stop=candidate.stop, target1=candidate.t1, target2=candidate.t2) if option_rows else {}
+        await self.telegram.send(self.format_signal(candidate, result, option_plan), parse_mode="HTML")
         return result
     @staticmethod
     def format_signal(c, r, option=None):
