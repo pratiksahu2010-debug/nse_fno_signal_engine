@@ -187,6 +187,43 @@ def replay(path, min_score=75, *, profile="strict", cost_bps_per_side=0.0,
     }
 
 
+def compare_profiles(path, min_score=75, *, cost_bps_per_side=0.0,
+                     slippage_bps_per_side=0.0, max_hold_bars=12):
+    """Run strict and balanced on the exact same input and assumptions."""
+    results = {
+        profile: replay(
+            path, min_score, profile=profile,
+            cost_bps_per_side=cost_bps_per_side,
+            slippage_bps_per_side=slippage_bps_per_side,
+            max_hold_bars=max_hold_bars,
+        )
+        for profile in ("strict", "balanced")
+    }
+    fields = (
+        "trades", "win_rate_pct", "expectancy_net_r", "expectancy_gross_r",
+        "profit_factor_net", "max_drawdown_net_r", "rejected_setup_count",
+        "rejection_reason_counts", "rejected_forward_outcomes",
+    )
+    return {
+        "file": path,
+        "comparison_warning": (
+            "Same historical sample is used for both profiles. Treat this as an "
+            "in-sample diagnostic, not proof of future performance. Validate on "
+            "a separate later period and include realistic instrument-specific costs."
+        ),
+        "assumptions": {
+            "min_score": min_score,
+            "cost_bps_per_side": cost_bps_per_side,
+            "slippage_bps_per_side": slippage_bps_per_side,
+            "max_hold_bars": max_hold_bars,
+        },
+        "profiles": {
+            profile: {key: result[key] for key in fields}
+            for profile, result in results.items()
+        },
+    }
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("csv")
@@ -195,8 +232,21 @@ if __name__ == "__main__":
     parser.add_argument("--cost-bps-per-side", type=float, default=0.0)
     parser.add_argument("--slippage-bps-per-side", type=float, default=0.0)
     parser.add_argument("--max-hold-bars", type=int, default=12)
+    parser.add_argument(
+        "--compare-profiles", action="store_true",
+        help="Run strict and balanced on the same CSV and report a side-by-side summary",
+    )
     args = parser.parse_args()
-    print(json.dumps(replay(args.csv, args.min_score, profile=args.profile,
-                            cost_bps_per_side=args.cost_bps_per_side,
-                            slippage_bps_per_side=args.slippage_bps_per_side,
-                            max_hold_bars=args.max_hold_bars), indent=2))
+    if args.compare_profiles:
+        output = compare_profiles(
+            args.csv, args.min_score,
+            cost_bps_per_side=args.cost_bps_per_side,
+            slippage_bps_per_side=args.slippage_bps_per_side,
+            max_hold_bars=args.max_hold_bars,
+        )
+    else:
+        output = replay(args.csv, args.min_score, profile=args.profile,
+                        cost_bps_per_side=args.cost_bps_per_side,
+                        slippage_bps_per_side=args.slippage_bps_per_side,
+                        max_hold_bars=args.max_hold_bars)
+    print(json.dumps(output, indent=2))
