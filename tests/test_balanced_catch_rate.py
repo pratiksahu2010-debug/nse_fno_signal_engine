@@ -100,3 +100,38 @@ def test_candidate_lifecycle_advances_once_per_unique_closed_candle():
     assert candidate.bars_seen == 1
     assert on_closed_candle(candidate, next_candle) is None
     assert candidate.bars_seen == 1
+
+def _five_minute_frame(start, count, missing=()):
+    rows = []
+    for i in range(count):
+        if i in missing:
+            continue
+        ts = start + timedelta(minutes=5 * i)
+        rows.append({
+            "ts": ts,
+            "open": 100.0 + i,
+            "high": 101.0 + i,
+            "low": 99.0 + i,
+            "close": 100.5 + i,
+            "volume": 1000.0,
+        })
+    return pd.DataFrame(rows)
+
+
+def test_completed_15m_bars_excludes_bucket_with_missing_5m_constituent():
+    from market_data.engine import completed_15m_bars
+
+    start = datetime(2026, 10, 24, 9, 15, tzinfo=timezone.utc)
+    frame = _five_minute_frame(start, 6, missing=(1,))
+    result = completed_15m_bars(frame, start + timedelta(minutes=32))
+    assert result["ts"].tolist() == [start + timedelta(minutes=15)]
+
+
+def test_completed_15m_bars_excludes_still_forming_bucket():
+    from market_data.engine import completed_15m_bars
+
+    start = datetime(2026, 10, 24, 9, 15, tzinfo=timezone.utc)
+    frame = _five_minute_frame(start, 4)
+    result = completed_15m_bars(frame, start + timedelta(minutes=17))
+    assert result["ts"].tolist() == [start]
+
