@@ -61,3 +61,28 @@ entry zone so reward:risk is not overstated.
 Confirmed CORE and EXPLOSION alerts are formatted as readable Telegram HTML messages with signal timestamp (IST and UTC), symbol/engine/setup/score, signal close, next-5-minute entry zone, stop and two targets, calculated reward-to-risk, EMA 9/21, RSI, ADX, VWAP, ATR, RVOL, directional indicators, candle quality, reasons and rejection gates. Price levels are **underlying reference levels**, not option-premium prices; the service remains signal-only and does not place orders.
 
 The service also attempts one daily summary after the configured NSE session close (normally 15:30 IST, with special-session times read from the market calendar). The report includes daily signal counts by direction and engine, candidate statuses, recent signals, top rejection counts and data/scan diagnostics. It is sent by the running service's polling loop; if the Render service sleeps or is unavailable at close, delivery may be delayed or missed. Signal/candidate history and the duplicate-send guard are currently in memory, so a restart can reset summary counts or allow a duplicate summary. Use durable storage and an always-on instance if reliable historical reporting is required.
+
+
+### Strict vs balanced replay comparison
+
+Run both profiles against the **same chronological 5-minute CSV** and the same assumptions:
+
+```bash
+python -m replay.backtest path/to/candles.csv --min-score 70 --compare-profiles --cost-bps-per-side 8 --slippage-bps-per-side 3 --max-hold-bars 12
+```
+
+Replace the example cost/slippage values with defensible estimates for the instrument and broker being studied; the numbers above are examples, not measured NSE charges. Output is JSON. The comparison includes trade count, win rate, gross/net expectancy in R, net profit factor, max drawdown in R, rejection reasons, and counterfactual outcomes for certain rejected setups.
+
+To run one profile only:
+
+```bash
+python -m replay.backtest path/to/candles.csv --profile balanced --min-score 70 --cost-bps-per-side 8 --slippage-bps-per-side 3 --max-hold-bars 12
+```
+
+CSV requirements and interpretation:
+
+- Required columns: `ts,open,high,low,close,volume`; optional `oi`. Keep timestamps parseable and rows in ascending time order. Use one instrument per file and use completed 5-minute candles.
+- The replay uses the next candle's open as the entry approximation and resolves a same-bar stop/target collision conservatively as a stop first. It is not an options-premium simulation.
+- `rejected_setup_count` and `rejected_forward_outcomes` are diagnostic counterfactuals for rejected setups, not extra trades. They can overlap accepted trades and one another; do not add them to P&L or use them as live signals.
+- A same-period strict/balanced comparison is in-sample. Choose thresholds only after checking a separate later out-of-sample period, across multiple symbols and different market conditions. Include realistic charges and slippage; do not optimize only for win rate or signal count.
+- The default profile remains `strict`. Use `balanced` as a controlled research comparison, not an automatic production recommendation.
