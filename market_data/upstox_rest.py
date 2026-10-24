@@ -37,6 +37,14 @@ class UpstoxREST:
             from datetime import datetime
             out.append(Candle(datetime.fromisoformat(row[0]),float(row[1]),float(row[2]),float(row[3]),float(row[4]),float(row[5] or 0),float(row[6] or 0) if len(row)>6 else 0))
         return sorted(out,key=lambda c:c.ts)
+    async def ltp_quote(self, key: str) -> float | None:
+        """Return one instrument LTP from the Upstox V3 market-quote endpoint."""
+        data = await self._get("/v3/market-quote/ltp", {"instrument_key": key})
+        for quote in (data.get("data") or {}).values():
+            if quote.get("instrument_token") == key and quote.get("last_price") is not None:
+                return float(quote["last_price"])
+        return None
+
     async def option_chain(self,key: str, expiry: str="current_week")->list[dict[str,Any]]:
         data=await self._get("/v2/option/chain",{"instrument_key":key,"expiry_date":expiry})
         return data.get("data",[]) or []
