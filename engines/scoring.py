@@ -185,6 +185,9 @@ def score_core(
         "ema9_extension_atr": round(ema9_extension, 3),
         "ema21_extension_atr": round(ema21_extension, 3),
         "profile": profile,
+        # Preserve the pre-rejection direction for offline diagnostics only. The
+        # public Score.direction remains None whenever any hard gate rejects.
+        "proposed_direction": direction,
         "context_adjustment": int(context_adjustment),
         "context_label": context_label,
         "score_components": {
