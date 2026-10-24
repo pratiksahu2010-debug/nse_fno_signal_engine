@@ -297,7 +297,7 @@ class SignalEngine:
         return (
             f"{direction_icon} <b>{direction_label}</b>\n"
             f"<b>{c.symbol}</b> | NSE F&amp;O | <b>CONFIRMED TECHNICAL SETUP</b>\n\n"
-            f"🕒 <b>1. TIMING</b>\n"
+            f"🕒 <b>SIGNAL DETAILS — 1. TIMING</b>\n"
             f"• Signal time: <b>{ist_time.strftime('%d %b %Y, %H:%M:%S IST')}</b>\n"
             f"• Entry validity: <b>until {entry_valid_until.strftime('%H:%M IST')} — next 5-minute candle only</b>\n"
             f"• Planned time exit: <b>{planned_exit.strftime('%H:%M IST')}</b> (time-based estimate; exit rules still apply)\n"
