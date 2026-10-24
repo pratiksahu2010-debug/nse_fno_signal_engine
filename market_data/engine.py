@@ -315,6 +315,7 @@ class SignalEngine:
             f"• Target 1 / Target 2: <b>{'₹' + fmt(premium_t1) if premium_t1 is not None else 'N/A'} / {'₹' + fmt(premium_t2) if premium_t2 is not None else 'N/A'}</b>\n"
             f"• Estimated risk per lot: <b>{'₹' + fmt(premium_risk) if premium_risk is not None else 'N/A'}</b>\n"
             f"• Premium reward:risk: <b>{fmt(premium_rr1)}R / {fmt(premium_rr2)}R</b>\n"
+            f"• Premium estimate method: <b>{option.get('premium_estimate_method', 'unavailable')}</b> — estimates are not live premium triggers.\n"
             f"• These premium levels must be calculated from the selected contract's quote/Greeks; they are not inferred from underlying prices.\n\n"
             f"📍 <b>4. TRADE PLAN (UNDERLYING REFERENCE LEVELS)</b>\n"
             f"• Spot / signal close: <b>{fmt(spot)}</b> | Futures: <b>{fmt(futures)}</b>\n"
