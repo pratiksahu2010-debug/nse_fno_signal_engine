@@ -60,7 +60,7 @@ def score_core(
         rejects.append("no_ema_trend")
 
     # Hard quality gates. Independent evidence is required; score cannot override these.
-    adx_floor = 22.0 if profile == "strict" else 18.0
+    adx_floor = 22.0 if profile == "strict" else 20.0
     rvol_floor = 1.2 if profile == "strict" else 0.9
     body_floor = 0.50 if profile == "strict" else 0.35
     if adx < adx_floor:
@@ -94,14 +94,17 @@ def score_core(
     if ema21_extension > max_ema21_extension:
         rejects.append("overextended_from_ema21")
 
-    if direction == "LONG" and not (45 <= rsi <= 70):
+    if direction == "LONG" and not ((45 <= rsi <= 70) if profile == "strict" else (40 <= rsi <= 75)):
         rejects.append("rsi_long_out_of_range")
-    if direction == "SHORT" and not (30 <= rsi <= 55):
+    if direction == "SHORT" and not ((30 <= rsi <= 55) if profile == "strict" else (25 <= rsi <= 60)):
         rejects.append("rsi_short_out_of_range")
-    if direction == "LONG" and close <= float(r.vwap):
-        rejects.append("below_vwap")
-    if direction == "SHORT" and close >= float(r.vwap):
-        rejects.append("above_vwap")
+    # Strict mode requires VWAP-side agreement. Balanced mode lets setup quality
+    # and the VWAP score contribution decide, preserving valid pullbacks/reclaims.
+    if profile == "strict":
+        if direction == "LONG" and close <= float(r.vwap):
+            rejects.append("below_vwap")
+        if direction == "SHORT" and close >= float(r.vwap):
+            rejects.append("above_vwap")
 
     # Give range breaks and genuine VWAP crosses precedence over a generic
     # EMA9 reclaim. Otherwise an overlapping breakout can be mislabeled as a
@@ -168,8 +171,9 @@ def score_core(
         reasons.append(context_label)
     # Options can adjust the score, but never override hard technical rejections.
     score = max(0, min(100, score + (int(option_adjustment) if option_available else 0)))
-    if not option_available and score < defaults.NO_OC_MIN_TECH_SCORE:
-        rejects.append("option_chain_unavailable_requires_tech_score_75")
+    no_option_floor = defaults.NO_OC_MIN_TECH_SCORE if profile == "strict" else min_score
+    if not option_available and score < no_option_floor:
+        rejects.append("option_chain_unavailable_requires_tech_score_75" if profile == "strict" else "score_below_balanced_technical_floor")
     if score < min_score:
         rejects.append("score_below_minimum")
 
