@@ -4,6 +4,7 @@ from zoneinfo import ZoneInfo
 from engines.scoring import Score
 from market_data.engine import SignalEngine
 from engines.candidates import Candidate
+from engines.option_chain import select_option_plan
 
 
 def test_format_signal_contains_trade_plan_and_indicators():
@@ -96,3 +97,39 @@ def test_format_signal_renders_selected_option_contract_without_fabricating_fiel
     assert "₹20.00" in message
     assert "₹27.50" in message
     assert "125,000" in message
+
+
+
+def test_option_plan_selects_liquid_call_and_estimates_lot_risk():
+    rows = [{
+        "expiry": "2026-10-29",
+        "strike_price": 1450,
+        "call_options": {
+            "instrument_key": "NSE_FO|123",
+            "market_data": {"ltp": 20.0, "bid_price": 19.5, "ask_price": 20.0, "oi": 120000, "volume": 25000},
+            "option_greeks": {"delta": 0.52, "gamma": 0.001, "theta": -2.0, "vega": 0.7, "iv": 21.5},
+        },
+        "put_options": {},
+    }]
+    masters = [{"instrument_key": "NSE_FO|123", "trading_symbol": "RELIANCE26OCT1450CE", "lot_size": 250}]
+    plan = select_option_plan(rows, "LONG", masters, entry=1450, stop=1440, target1=1465, target2=1480)
+    assert plan["trading_symbol"] == "RELIANCE26OCT1450CE"
+    assert plan["expiry"] == "2026-10-29"
+    assert plan["lot_size"] == 250
+    assert plan["estimated_cost_per_lot"] == 5000
+    assert plan["risk_per_lot"] > 0
+    assert plan["premium_t2"] > plan["premium_t1"] > plan["ask"]
+
+
+def test_option_plan_returns_empty_when_chain_quote_is_not_tradeable():
+    rows = [{
+        "expiry": "2026-10-29",
+        "strike_price": 1450,
+        "call_options": {
+            "instrument_key": "NSE_FO|123",
+            "market_data": {"ltp": 20.0, "bid_price": 19.5, "ask_price": 23.0, "oi": 0, "volume": 0},
+            "option_greeks": {"delta": 0.52},
+        },
+    }]
+    masters = [{"instrument_key": "NSE_FO|123", "lot_size": 250}]
+    assert select_option_plan(rows, "LONG", masters, 1450, 1440, 1465, 1480) == {}
